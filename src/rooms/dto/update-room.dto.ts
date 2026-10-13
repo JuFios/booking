@@ -1,13 +1,17 @@
 import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsBoolean, IsOptional } from 'class-validator';
+import { IsBoolean, ValidateIf } from 'class-validator';
 import { CreateRoomDto } from './create-room.dto';
 
-export class UpdateRoomDto extends PartialType(CreateRoomDto) {
+// skipNullProperties: false — fields may be omitted, but an explicit null is
+// validated (and rejected) instead of reaching the database
+export class UpdateRoomDto extends PartialType(CreateRoomDto, {
+  skipNullProperties: false,
+}) {
   @ApiPropertyOptional({
     example: false,
     description: 'Set to false to deactivate the room',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   isActive?: boolean;
 }
