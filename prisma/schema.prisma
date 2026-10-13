@@ -8,3 +8,74 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum Role {
+  admin
+  member
+}
+
+enum BookingStatus {
+  confirmed
+  cancelled
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         Role      @default(member)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+  bookings     Booking[]
+}
+
+model Room {
+  id        String          @id @default(uuid()) @db.Uuid
+  name      String          @unique
+  capacity  Int
+  floor     Int
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
+  equipment RoomEquipment[]
+  bookings  Booking[]
+
+  @@index([floor])
+  @@index([capacity])
+}
+
+model Equipment {
+  id        String          @id @default(uuid()) @db.Uuid
+  name      String          @unique
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  rooms     RoomEquipment[]
+}
+
+model RoomEquipment {
+  roomId      String    @db.Uuid
+  equipmentId String    @db.Uuid
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, equipmentId])
+  @@index([equipmentId])
+}
+
+model Booking {
+  id             String        @id @default(uuid()) @db.Uuid
+  title          String
+  startsAt       DateTime      @db.Timestamptz(3)
+  endsAt         DateTime      @db.Timestamptz(3)
+  status         BookingStatus @default(confirmed)
+  attendeesCount Int
+  userId         String        @db.Uuid
+  roomId         String        @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  room           Room          @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  @@index([roomId, startsAt])
+  @@index([userId, startsAt])
+}
