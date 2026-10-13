@@ -8,15 +8,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { STATUS_CODES } from 'node:http';
-
-export interface ErrorResponseBody {
-  statusCode: number;
-  error: string;
-  message: string;
-  details?: string[];
-  path: string;
-  timestamp: string;
-}
+import { ErrorResponseDto } from '../dto/error-response.dto';
 
 interface ResolvedError {
   statusCode: number;
@@ -42,7 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
-    const body: ErrorResponseBody = {
+    const body: ErrorResponseDto = {
       statusCode,
       error: STATUS_CODES[statusCode] ?? 'Error',
       message,
