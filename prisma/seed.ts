@@ -77,6 +77,60 @@ async function seedRooms(prisma: PrismaClient): Promise<void> {
   }
 }
 
+// Optional large data set (SEED_BULK=true) to check index usage with EXPLAIN ANALYZE:
+// on a table with a handful of rows Postgres always prefers a sequential scan.
+const BULK_ROOMS = 5000;
+const BULK_EQUIPMENT = 20;
+const BULK_EQUIPMENT_PER_ROOM = 2;
+
+async function seedBulk(prisma: PrismaClient): Promise<void> {
+  const equipmentNames = Array.from(
+    { length: BULK_EQUIPMENT },
+    (_, i) => `Bulk equipment ${String(i + 1).padStart(2, '0')}`,
+  );
+  await prisma.equipment.createMany({
+    data: equipmentNames.map((name) => ({ name })),
+    skipDuplicates: true,
+  });
+  const equipment = await prisma.equipment.findMany({
+    where: { name: { in: equipmentNames } },
+    orderBy: { name: 'asc' },
+    select: { id: true },
+  });
+
+  const roomNames = Array.from(
+    { length: BULK_ROOMS },
+    (_, i) => `Bulk room ${String(i + 1).padStart(5, '0')}`,
+  );
+  await prisma.room.createMany({
+    data: roomNames.map((name, i) => ({
+      name,
+      capacity: 2 + (i % 39),
+      floor: -2 + (i % 33),
+    })),
+    skipDuplicates: true,
+  });
+  const rooms = await prisma.room.findMany({
+    where: { name: { in: roomNames } },
+    orderBy: { name: 'asc' },
+    select: { id: true },
+  });
+
+  await prisma.roomEquipment.createMany({
+    data: rooms.flatMap((room, i) =>
+      Array.from({ length: BULK_EQUIPMENT_PER_ROOM }, (_, j) => ({
+        roomId: room.id,
+        equipmentId: equipment[(i + j * 7) % BULK_EQUIPMENT].id,
+      })),
+    ),
+    skipDuplicates: true,
+  });
+
+  console.log(
+    `Seeded ${BULK_EQUIPMENT} bulk equipment items and ${BULK_ROOMS} bulk rooms`,
+  );
+}
+
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -93,6 +147,10 @@ async function main(): Promise<void> {
     console.log(
       `Seeded ${EQUIPMENT.length} equipment items and ${ROOMS.length} rooms`,
     );
+
+    if (process.env.SEED_BULK === 'true') {
+      await seedBulk(prisma);
+    }
   } finally {
     await prisma.$disconnect();
   }
