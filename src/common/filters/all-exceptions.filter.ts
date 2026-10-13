@@ -47,13 +47,42 @@ export class AllExceptionsFilter implements ExceptionFilter {
   }
 
   private resolve(exception: unknown): ResolvedError {
-    if (!(exception instanceof HttpException)) {
+    if (exception instanceof HttpException) {
+      return this.resolveHttpException(exception);
+    }
+
+    const clientErrorStatus = this.getClientErrorStatus(exception);
+    if (clientErrorStatus) {
       return {
-        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: 'Internal server error',
+        statusCode: clientErrorStatus,
+        message:
+          exception instanceof Error
+            ? exception.message
+            : (STATUS_CODES[clientErrorStatus] ?? 'Error'),
       };
     }
 
+    return {
+      statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+      message: 'Internal server error',
+    };
+  }
+
+  // Errors from Express middleware (e.g. body-parser's 413) are not
+  // HttpExceptions but carry a 4xx status in the `statusCode` field.
+  private getClientErrorStatus(exception: unknown): number | undefined {
+    if (typeof exception !== 'object' || exception === null) {
+      return undefined;
+    }
+
+    const { statusCode } = exception as { statusCode?: unknown };
+    const isClientError =
+      typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500;
+
+    return isClientError ? statusCode : undefined;
+  }
+
+  private resolveHttpException(exception: HttpException): ResolvedError {
     const statusCode = exception.getStatus();
     const payload = exception.getResponse();
 
