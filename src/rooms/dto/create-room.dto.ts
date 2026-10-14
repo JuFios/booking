@@ -11,6 +11,7 @@ import {
   Max,
   MaxLength,
   Min,
+  NotContains,
 } from 'class-validator';
 
 export class CreateRoomDto {
@@ -21,6 +22,8 @@ export class CreateRoomDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
+  // Postgres text cannot store the NUL character (0x00)
+  @NotContains('\0', { message: 'name must not contain null characters' })
   name!: string;
 
   @ApiProperty({ example: 12, minimum: 1, maximum: 1000 })
