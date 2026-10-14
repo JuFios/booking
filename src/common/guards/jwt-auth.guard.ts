@@ -52,11 +52,11 @@ export class JwtAuthGuard implements CanActivate {
     return true;
   }
 
-  // Authorization: Bearer <token>
+  // Authorization: Bearer <token>; the scheme name is case-insensitive (RFC 7235)
   private extractBearerToken(
     request: AuthenticatedRequest,
   ): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' && token ? token : undefined;
+    const match = /^Bearer\s+(\S+)$/i.exec(request.headers.authorization ?? '');
+    return match?.[1];
   }
 }

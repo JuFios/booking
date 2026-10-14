@@ -170,6 +170,21 @@ describe('Auth (e2e)', () => {
       expect(response.body).toMatchObject({ email: emailFor('jane') });
       expect(response.body).not.toHaveProperty('passwordHash');
     });
+
+    it('accepts the Bearer scheme in any case', async () => {
+      const { accessToken } = await login(emailFor('jane'));
+
+      for (const scheme of ['bearer', 'BEARER', 'Bearer']) {
+        await request(app.getHttpServer())
+          .get('/users/me')
+          .set('Authorization', `${scheme} ${accessToken}`)
+          .expect(200);
+      }
+      await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', `Basic ${accessToken}`)
+        .expect(401);
+    });
   });
 
   describe('POST /auth/refresh', () => {
