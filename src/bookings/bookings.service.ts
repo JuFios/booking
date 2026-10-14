@@ -39,44 +39,45 @@ export class BookingsService {
       throw new BadRequestException(timeError);
     }
 
-    const room = await this.prisma.room.findUnique({
-      where: { id: dto.roomId },
-      select: { isActive: true, capacity: true },
-    });
-    if (!room) {
-      throw new NotFoundException('Room not found');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      // FOR UPDATE locks the room row until the transaction ends: a parallel
+      // booking of the same room waits here and then sees the first booking
+      const [room] = await tx.$queryRaw<
+        { isActive: boolean; capacity: number }[]
+      >`SELECT "isActive", capacity FROM "Room" WHERE id = ${dto.roomId}::uuid FOR UPDATE`;
+      if (!room) {
+        throw new NotFoundException('Room not found');
+      }
 
-    const roomError = checkRoomForBooking(room, dto.attendeesCount);
-    if (roomError) {
-      throw new BadRequestException(roomError);
-    }
+      const roomError = checkRoomForBooking(room, dto.attendeesCount);
+      if (roomError) {
+        throw new BadRequestException(roomError);
+      }
 
-    // Naive check: another request can insert an overlapping booking
-    // between this SELECT and the INSERT below
-    const overlapping = await this.prisma.booking.findFirst({
-      where: {
-        roomId: dto.roomId,
-        status: 'confirmed',
-        startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt },
-      },
-      select: { id: true },
-    });
-    if (overlapping) {
-      throw new ConflictException('Room is already booked for this time');
-    }
+      const overlapping = await tx.booking.findFirst({
+        where: {
+          roomId: dto.roomId,
+          status: 'confirmed',
+          startsAt: { lt: endsAt },
+          endsAt: { gt: startsAt },
+        },
+        select: { id: true },
+      });
+      if (overlapping) {
+        throw new ConflictException('Room is already booked for this time');
+      }
 
-    return this.prisma.booking.create({
-      data: {
-        title: dto.title,
-        startsAt,
-        endsAt,
-        attendeesCount: dto.attendeesCount,
-        roomId: dto.roomId,
-        userId,
-      },
-      select: bookingSelect,
+      return tx.booking.create({
+        data: {
+          title: dto.title,
+          startsAt,
+          endsAt,
+          attendeesCount: dto.attendeesCount,
+          roomId: dto.roomId,
+          userId,
+        },
+        select: bookingSelect,
+      });
     });
   }
 }
