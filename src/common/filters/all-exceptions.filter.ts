@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { STATUS_CODES } from 'node:http';
+import { Prisma } from '../../generated/prisma/client';
 import { ErrorResponseDto } from '../dto/error-response.dto';
 
 interface ResolvedError {
@@ -51,6 +52,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return this.resolveHttpException(exception);
     }
 
+    if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      const prismaError = this.resolvePrismaError(exception);
+      if (prismaError) {
+        return prismaError;
+      }
+    }
+
     const clientErrorStatus = this.getClientErrorStatus(exception);
     if (clientErrorStatus) {
       return {
@@ -66,6 +74,29 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       message: 'Internal server error',
     };
+  }
+
+  private resolvePrismaError(
+    exception: Prisma.PrismaClientKnownRequestError,
+  ): ResolvedError | undefined {
+    const meta = exception.meta as
+      { model?: string; modelName?: string } | undefined;
+    const model = meta?.model ?? meta?.modelName ?? 'Record';
+
+    switch (exception.code) {
+      case 'P2002': // unique constraint violation
+        return {
+          statusCode: HttpStatus.CONFLICT,
+          message: `${model} already exists`,
+        };
+      case 'P2025': // record required for the operation was not found
+        return {
+          statusCode: HttpStatus.NOT_FOUND,
+          message: `${model} not found`,
+        };
+      default:
+        return undefined;
+    }
   }
 
   // Errors from Express middleware (e.g. body-parser's 413) are not

@@ -1,0 +1,147 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Page, toPage, toSkipTake } from '../common/utils/pagination';
+import { Prisma } from '../generated/prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateRoomDto } from './dto/create-room.dto';
+import { ListRoomsQueryDto } from './dto/list-rooms-query.dto';
+import { RoomResponseDto } from './dto/room-response.dto';
+import { UpdateRoomDto } from './dto/update-room.dto';
+
+const roomSelect = {
+  id: true,
+  name: true,
+  capacity: true,
+  floor: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  equipment: {
+    select: { equipment: { select: { id: true, name: true } } },
+    orderBy: { equipment: { name: 'asc' } },
+  },
+} satisfies Prisma.RoomSelect;
+
+type RoomRow = Prisma.RoomGetPayload<{ select: typeof roomSelect }>;
+
+@Injectable()
+export class RoomsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll(query: ListRoomsQueryDto): Promise<Page<RoomResponseDto>> {
+    const where = this.buildWhere(query);
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.room.findMany({
+        where,
+        select: roomSelect,
+        orderBy: { name: 'asc' },
+        ...toSkipTake(query),
+      }),
+      this.prisma.room.count({ where }),
+    ]);
+
+    return toPage(rows.map(toRoomResponse), total, query);
+  }
+
+  async findOne(id: string): Promise<RoomResponseDto> {
+    const room = await this.prisma.room.findUnique({
+      where: { id },
+      select: roomSelect,
+    });
+
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
+
+    return toRoomResponse(room);
+  }
+
+  async create(dto: CreateRoomDto): Promise<RoomResponseDto> {
+    const equipmentIds = dto.equipmentIds ?? [];
+    await this.assertEquipmentExists(equipmentIds);
+
+    const room = await this.prisma.room.create({
+      data: {
+        name: dto.name,
+        capacity: dto.capacity,
+        floor: dto.floor,
+        equipment: {
+          create: equipmentIds.map((equipmentId) => ({ equipmentId })),
+        },
+      },
+      select: roomSelect,
+    });
+
+    return toRoomResponse(room);
+  }
+
+  async update(id: string, dto: UpdateRoomDto): Promise<RoomResponseDto> {
+    const { equipmentIds, ...fields } = dto;
+
+    if (equipmentIds) {
+      await this.assertEquipmentExists(equipmentIds);
+    }
+
+    const room = await this.prisma.room.update({
+      where: { id },
+      data: {
+        ...fields,
+        // the new list replaces the old one
+        ...(equipmentIds && {
+          equipment: {
+            deleteMany: {},
+            create: equipmentIds.map((equipmentId) => ({ equipmentId })),
+          },
+        }),
+      },
+      select: roomSelect,
+    });
+
+    return toRoomResponse(room);
+  }
+
+  private buildWhere(query: ListRoomsQueryDto): Prisma.RoomWhereInput {
+    return {
+      ...(query.minCapacity !== undefined && {
+        capacity: { gte: query.minCapacity },
+      }),
+      ...(query.floor !== undefined && { floor: query.floor }),
+      // the room must have every requested equipment item
+      ...(query.equipment?.length && {
+        AND: query.equipment.map((equipmentId) => ({
+          equipment: { some: { equipmentId } },
+        })),
+      }),
+    };
+  }
+
+  private async assertEquipmentExists(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const found = await this.prisma.equipment.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+    const foundIds = new Set(found.map((item) => item.id));
+    const unknownIds = ids.filter((id) => !foundIds.has(id));
+
+    if (unknownIds.length > 0) {
+      throw new BadRequestException(
+        `Unknown equipment ids: ${unknownIds.join(', ')}`,
+      );
+    }
+  }
+}
+
+function toRoomResponse(room: RoomRow): RoomResponseDto {
+  return {
+    ...room,
+    equipment: room.equipment.map((link) => link.equipment),
+  };
+}
