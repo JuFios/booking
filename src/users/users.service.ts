@@ -24,6 +24,14 @@ export class UsersService {
     return this.prisma.user.create({ data, select: userSelect });
   }
 
+  // A deleted user with a still valid token gets 404 (P2025 in the exception filter)
+  findById(id: string): Promise<UserResponseDto> {
+    return this.prisma.user.findUniqueOrThrow({
+      where: { id },
+      select: userSelect,
+    });
+  }
+
   findCredentialsByEmail(
     email: string,
   ): Promise<{ id: string; role: Role; passwordHash: string } | null> {

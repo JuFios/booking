@@ -8,6 +8,7 @@ import { EquipmentModule } from './equipment/equipment.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RoomsModule } from './rooms/rooms.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { RoomsModule } from './rooms/rooms.module';
     PrismaModule,
     HealthModule,
     AuthModule,
+    UsersModule,
     EquipmentModule,
     RoomsModule,
   ],
