@@ -1,15 +1,19 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { TokensResponseDto } from './dto/tokens-response.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -26,5 +30,18 @@ export class AuthController {
   })
   register(@Body() dto: RegisterDto): Promise<UserResponseDto> {
     return this.authService.register(dto);
+  }
+
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Log in and get access and refresh tokens' })
+  @ApiOkResponse({ type: TokensResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Invalid email or password',
+  })
+  login(@Body() dto: LoginDto): Promise<TokensResponseDto> {
+    return this.authService.login(dto);
   }
 }

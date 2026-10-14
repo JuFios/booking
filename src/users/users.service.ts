@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client';
+import { Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserResponseDto } from './dto/user-response.dto';
 
@@ -22,5 +22,14 @@ export class UsersService {
     passwordHash: string;
   }): Promise<UserResponseDto> {
     return this.prisma.user.create({ data, select: userSelect });
+  }
+
+  findCredentialsByEmail(
+    email: string,
+  ): Promise<{ id: string; role: Role; passwordHash: string } | null> {
+    return this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, role: true, passwordHash: true },
+    });
   }
 }
