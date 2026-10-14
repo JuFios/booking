@@ -7,6 +7,7 @@ import {
   Matches,
   Max,
   Min,
+  MinLength,
   validateSync,
 } from 'class-validator';
 
@@ -31,6 +32,23 @@ export class EnvironmentVariables {
     message: 'DATABASE_URL must start with postgresql://',
   })
   DATABASE_URL!: string;
+
+  @IsString()
+  @MinLength(32)
+  JWT_ACCESS_SECRET!: string;
+
+  @IsString()
+  @MinLength(32)
+  JWT_REFRESH_SECRET!: string;
+
+  // Token lifetimes in seconds
+  @IsInt()
+  @Min(1)
+  JWT_ACCESS_TTL: number = 900;
+
+  @IsInt()
+  @Min(1)
+  JWT_REFRESH_TTL: number = 604800;
 }
 
 export function validateEnv(
@@ -41,12 +59,22 @@ export function validateEnv(
   });
 
   const errors = validateSync(env, { skipMissingProperties: false });
+  const messages = errors.flatMap((error) =>
+    Object.values(error.constraints ?? {}),
+  );
 
-  if (errors.length > 0) {
-    const messages = errors
-      .flatMap((error) => Object.values(error.constraints ?? {}))
-      .join('\n  - ');
-    throw new Error(`Invalid environment variables:\n  - ${messages}`);
+  // With one secret for both, a refresh token would also pass as an access token
+  if (
+    env.JWT_ACCESS_SECRET &&
+    env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET
+  ) {
+    messages.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different');
+  }
+
+  if (messages.length > 0) {
+    throw new Error(
+      `Invalid environment variables:\n  - ${messages.join('\n  - ')}`,
+    );
   }
 
   return env;
