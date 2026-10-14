@@ -5,6 +5,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import { RefreshTokenCleanupService } from '../src/auth/refresh-token-cleanup.service';
 import {
   REUSE_GRACE_PERIOD_MS,
   RefreshTokenPayload,
@@ -255,6 +256,38 @@ describe('Auth (e2e)', () => {
         .auth(accessToken, { type: 'bearer' })
         .send({ name: `E2E ${run} admin` })
         .expect(201);
+    });
+  });
+
+  describe('refresh token cleanup', () => {
+    it('deletes expired tokens and keeps revoked ones until they expire', async () => {
+      await register('cleanup').expect(201);
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { email: emailFor('cleanup') },
+      });
+      const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const inAWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const [expired, revoked, active] = await Promise.all([
+        prisma.refreshToken.create({
+          data: { userId: user.id, expiresAt: hourAgo },
+        }),
+        prisma.refreshToken.create({
+          data: { userId: user.id, expiresAt: inAWeek, revokedAt: hourAgo },
+        }),
+        prisma.refreshToken.create({
+          data: { userId: user.id, expiresAt: inAWeek },
+        }),
+      ]);
+
+      await app.get(RefreshTokenCleanupService).deleteExpired();
+
+      const left = await prisma.refreshToken.findMany({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      const leftIds = left.map((token) => token.id);
+      expect(leftIds).not.toContain(expired.id);
+      expect(leftIds).toEqual(expect.arrayContaining([revoked.id, active.id]));
     });
   });
 });

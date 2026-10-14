@@ -6,6 +6,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { TokensService } from './tokens.service';
 
 @Module({
@@ -15,6 +16,7 @@ import { TokensService } from './tokens.service';
   providers: [
     AuthService,
     TokensService,
+    RefreshTokenCleanupService,
     // Global guards: apply to every route in the app, not only to this module.
     // Order matters: JwtAuthGuard sets request.user, RolesGuard reads it
     { provide: APP_GUARD, useClass: JwtAuthGuard },

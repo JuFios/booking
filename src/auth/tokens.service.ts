@@ -115,7 +115,7 @@ export class TokensService {
     if (!stored?.revokedAt) {
       return;
     }
-    
+
     if (now.getTime() - stored.revokedAt.getTime() < REUSE_GRACE_PERIOD_MS) {
       return;
     }
