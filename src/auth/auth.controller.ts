@@ -3,16 +3,22 @@ import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import {
+  type AuthenticatedUser,
+  CurrentUser,
+} from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { TokensResponseDto } from './dto/tokens-response.dto';
 
@@ -46,5 +52,34 @@ export class AuthController {
   })
   login(@Body() dto: LoginDto): Promise<TokensResponseDto> {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get a new token pair; the used refresh token stops working',
+  })
+  @ApiOkResponse({ type: TokensResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Refresh token is invalid, expired or already used',
+  })
+  refresh(@Body() dto: RefreshTokenDto): Promise<TokensResponseDto> {
+    return this.authService.refresh(dto);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a refresh token' })
+  @ApiNoContentResponse({ description: 'Refresh token revoked' })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  logout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RefreshTokenDto,
+  ): Promise<void> {
+    return this.authService.logout(user.id, dto);
   }
 }

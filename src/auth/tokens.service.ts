@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Role } from '../generated/prisma/client';
+import { Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokensResponseDto } from './dto/tokens-response.dto';
 
@@ -14,6 +14,8 @@ export interface RefreshTokenPayload {
   sub: string;
   jti: string;
 }
+
+const INVALID_REFRESH_TOKEN = 'Invalid refresh token';
 
 @Injectable()
 export class TokensService {
@@ -33,8 +35,12 @@ export class TokensService {
     this.refreshTtl = config.getOrThrow<number>('JWT_REFRESH_TTL');
   }
 
-  async issue(user: { id: string; role: Role }): Promise<TokensResponseDto> {
-    const { id: jti } = await this.prisma.refreshToken.create({
+  // db lets rotate() issue the new pair inside its transaction
+  async issue(
+    user: { id: string; role: Role },
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<TokensResponseDto> {
+    const { id: jti } = await db.refreshToken.create({
       data: {
         userId: user.id,
         expiresAt: new Date(Date.now() + this.refreshTtl * 1000),
@@ -57,5 +63,72 @@ export class TokensService {
     ]);
 
     return { accessToken, refreshToken };
+  }
+
+  async rotate(refreshToken: string): Promise<TokensResponseDto> {
+    const { jti } = await this.verifyRefreshToken(refreshToken);
+    const now = new Date();
+
+    const tokens = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.refreshToken.updateMany({
+        where: { id: jti, revokedAt: null, expiresAt: { gt: now } },
+        data: { revokedAt: now },
+      });
+      if (count === 0) {
+        return null;
+      }
+
+      const { user } = await tx.refreshToken.findUniqueOrThrow({
+        where: { id: jti },
+        select: { user: { select: { id: true, role: true } } },
+      });
+      return this.issue(user, tx);
+    });
+
+    if (!tokens) {
+      // Outside the transaction: throwing inside it would roll this back
+      await this.revokeAllIfReused(jti, now);
+      throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+    }
+
+    return tokens;
+  }
+
+  async revoke(refreshToken: string, userId: string): Promise<void> {
+    const { jti } = await this.verifyRefreshToken(refreshToken);
+
+    await this.prisma.refreshToken.updateMany({
+      where: { id: jti, userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  // A revoked token used again means someone else may hold a copy of it,
+  // so every session of this user is closed
+  private async revokeAllIfReused(jti: string, now: Date): Promise<void> {
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { id: jti },
+      select: { userId: true, revokedAt: true },
+    });
+    if (!stored?.revokedAt) {
+      return;
+    }
+
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: stored.userId, revokedAt: null },
+      data: { revokedAt: now },
+    });
+  }
+
+  private async verifyRefreshToken(
+    token: string,
+  ): Promise<RefreshTokenPayload> {
+    try {
+      return await this.jwtService.verifyAsync<RefreshTokenPayload>(token, {
+        secret: this.refreshSecret,
+      });
+    } catch {
+      throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+    }
   }
 }

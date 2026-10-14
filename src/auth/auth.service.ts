@@ -3,6 +3,7 @@ import * as argon2 from 'argon2';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { TokensResponseDto } from './dto/tokens-response.dto';
 import { TokensService } from './tokens.service';
@@ -43,5 +44,13 @@ export class AuthService {
     }
 
     return this.tokensService.issue(user);
+  }
+
+  refresh(dto: RefreshTokenDto): Promise<TokensResponseDto> {
+    return this.tokensService.rotate(dto.refreshToken);
+  }
+
+  logout(userId: string, dto: RefreshTokenDto): Promise<void> {
+    return this.tokensService.revoke(dto.refreshToken, userId);
   }
 }
