@@ -17,6 +17,10 @@ export interface RefreshTokenPayload {
 
 const INVALID_REFRESH_TOKEN = 'Invalid refresh token';
 
+// A token reused this soon after its rotation is treated as a parallel request
+// (two tabs, a retry after a timeout), not as theft
+export const REUSE_GRACE_PERIOD_MS = 10_000;
+
 @Injectable()
 export class TokensService {
   private readonly accessSecret: string;
@@ -103,14 +107,16 @@ export class TokensService {
     });
   }
 
-  // A revoked token used again means someone else may hold a copy of it,
-  // so every session of this user is closed
   private async revokeAllIfReused(jti: string, now: Date): Promise<void> {
     const stored = await this.prisma.refreshToken.findUnique({
       where: { id: jti },
       select: { userId: true, revokedAt: true },
     });
     if (!stored?.revokedAt) {
+      return;
+    }
+    
+    if (now.getTime() - stored.revokedAt.getTime() < REUSE_GRACE_PERIOD_MS) {
       return;
     }
 

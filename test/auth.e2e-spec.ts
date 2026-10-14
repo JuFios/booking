@@ -5,6 +5,10 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import {
+  REUSE_GRACE_PERIOD_MS,
+  RefreshTokenPayload,
+} from '../src/auth/tokens.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Auth (e2e)', () => {
@@ -31,6 +35,17 @@ describe('Auth (e2e)', () => {
 
   const refresh = (refreshToken: string) =>
     request(app.getHttpServer()).post('/auth/refresh').send({ refreshToken });
+
+  // Moves the token's revocation into the past, as if the grace period is over
+  const expireGracePeriod = async (refreshToken: string) => {
+    const { jti } = JSON.parse(
+      Buffer.from(refreshToken.split('.')[1], 'base64url').toString(),
+    ) as RefreshTokenPayload;
+    await prisma.refreshToken.update({
+      where: { id: jti },
+      data: { revokedAt: new Date(Date.now() - REUSE_GRACE_PERIOD_MS - 1000) },
+    });
+  };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -167,12 +182,30 @@ describe('Auth (e2e)', () => {
       await refresh(first.refreshToken).expect(401);
     });
 
-    it('revokes every session of the user when a used token comes back', async () => {
+    it('lets one of two parallel refreshes win and keeps the session', async () => {
+      await register('parallel').expect(201);
+      const { refreshToken } = await login(emailFor('parallel'));
+
+      const responses = await Promise.all([
+        refresh(refreshToken),
+        refresh(refreshToken),
+      ]);
+
+      const statuses = responses.map((response) => response.status).sort();
+      expect(statuses).toEqual([200, 401]);
+      // Within the grace period the loser is not treated as theft
+      const winner = responses.find((response) => response.status === 200);
+      const tokens = winner?.body as TokensResponseDto;
+      await refresh(tokens.refreshToken).expect(200);
+    });
+
+    it('revokes every session of the user when a used token comes back after the grace period', async () => {
       await register('reuse').expect(201);
       const stolen = await login(emailFor('reuse'));
       const otherSession = await login(emailFor('reuse'));
 
       await refresh(stolen.refreshToken).expect(200);
+      await expireGracePeriod(stolen.refreshToken);
       // Second use of the same token: looks like theft
       await refresh(stolen.refreshToken).expect(401);
 
