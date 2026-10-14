@@ -1,0 +1,227 @@
+import { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import * as argon2 from 'argon2';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import { AppModule } from '../src/app.module';
+import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import { PrismaService } from '../src/prisma/prisma.service';
+
+describe('Auth (e2e)', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+
+  // Unique per run, so the tests do not clash with existing data or each other
+  const run = Date.now();
+  const emailFor = (name: string) => `${name}-${run}@e2e.test`;
+  const password = 'secret-pass-1';
+
+  const register = (name: string) =>
+    request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: emailFor(name), password, name });
+
+  const login = async (email: string): Promise<TokensResponseDto> => {
+    const response = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+    return response.body as TokensResponseDto;
+  };
+
+  const refresh = (refreshToken: string) =>
+    request(app.getHttpServer()).post('/auth/refresh').send({ refreshToken });
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await app.init();
+    prisma = app.get(PrismaService);
+
+    // Admins cannot register through the API, so this one is created directly
+    await prisma.user.create({
+      data: {
+        email: emailFor('admin'),
+        name: 'Admin',
+        role: 'admin',
+        passwordHash: await argon2.hash(password),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.equipment.deleteMany({
+      where: { name: { startsWith: `E2E ${run}` } },
+    });
+    // Refresh tokens are removed by the cascade
+    await prisma.user.deleteMany({
+      where: { email: { endsWith: `-${run}@e2e.test` } },
+    });
+    await app.close();
+  });
+
+  describe('POST /auth/register', () => {
+    it('creates a member and never returns the password hash', async () => {
+      const response = await register('jane').expect(201);
+
+      expect(response.body).toEqual({
+        id: expect.any(String) as string,
+        email: emailFor('jane'),
+        name: 'jane',
+        role: 'member',
+        createdAt: expect.any(String) as string,
+      });
+    });
+
+    it('returns 409 for an email that is already taken, in any case', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: emailFor('jane').toUpperCase(), password, name: 'Jane' })
+        .expect(409);
+    });
+
+    it('returns 400 when the client tries to set a role', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: emailFor('mallory'),
+          password,
+          name: 'M',
+          role: 'admin',
+        })
+        .expect(400);
+
+      expect(response.body).toMatchObject({
+        details: ['property role should not exist'],
+      });
+    });
+  });
+
+  describe('POST /auth/login', () => {
+    it('returns an access and a refresh token', async () => {
+      const tokens = await login(emailFor('jane'));
+
+      expect(tokens).toEqual({
+        accessToken: expect.any(String) as string,
+        refreshToken: expect.any(String) as string,
+      });
+    });
+
+    it('gives the same 401 for a wrong password and an unknown email', async () => {
+      const wrongPassword = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: emailFor('jane'), password: 'wrong-password' })
+        .expect(401);
+      const unknownEmail = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: emailFor('nobody'), password: 'wrong-password' })
+        .expect(401);
+
+      expect(wrongPassword.body).toMatchObject({
+        message: 'Invalid email or password',
+      });
+      expect(unknownEmail.body).toMatchObject({
+        message: 'Invalid email or password',
+      });
+    });
+  });
+
+  describe('GET /users/me', () => {
+    it('returns 401 without a token', async () => {
+      await request(app.getHttpServer()).get('/users/me').expect(401);
+    });
+
+    it('returns 401 when a refresh token is used as an access token', async () => {
+      const { refreshToken } = await login(emailFor('jane'));
+
+      await request(app.getHttpServer())
+        .get('/users/me')
+        .auth(refreshToken, { type: 'bearer' })
+        .expect(401);
+    });
+
+    it('returns the current user without the password hash', async () => {
+      const { accessToken } = await login(emailFor('jane'));
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me')
+        .auth(accessToken, { type: 'bearer' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ email: emailFor('jane') });
+      expect(response.body).not.toHaveProperty('passwordHash');
+    });
+  });
+
+  describe('POST /auth/refresh', () => {
+    it('returns a new pair and makes the used refresh token invalid', async () => {
+      const first = await login(emailFor('jane'));
+
+      const response = await refresh(first.refreshToken).expect(200);
+      const second = response.body as TokensResponseDto;
+
+      expect(second.refreshToken).not.toBe(first.refreshToken);
+      await refresh(first.refreshToken).expect(401);
+    });
+
+    it('revokes every session of the user when a used token comes back', async () => {
+      await register('reuse').expect(201);
+      const stolen = await login(emailFor('reuse'));
+      const otherSession = await login(emailFor('reuse'));
+
+      await refresh(stolen.refreshToken).expect(200);
+      // Second use of the same token: looks like theft
+      await refresh(stolen.refreshToken).expect(401);
+
+      await refresh(otherSession.refreshToken).expect(401);
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    it('requires an access token', async () => {
+      const { refreshToken } = await login(emailFor('jane'));
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .send({ refreshToken })
+        .expect(401);
+    });
+
+    it('revokes the refresh token', async () => {
+      const { accessToken, refreshToken } = await login(emailFor('jane'));
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .auth(accessToken, { type: 'bearer' })
+        .send({ refreshToken })
+        .expect(204);
+
+      await refresh(refreshToken).expect(401);
+    });
+  });
+
+  describe('roles', () => {
+    it('returns 403 when a member creates equipment', async () => {
+      const { accessToken } = await login(emailFor('jane'));
+
+      await request(app.getHttpServer())
+        .post('/equipment')
+        .auth(accessToken, { type: 'bearer' })
+        .send({ name: `E2E ${run} member` })
+        .expect(403);
+    });
+
+    it('lets an admin create equipment', async () => {
+      const { accessToken } = await login(emailFor('admin'));
+
+      await request(app.getHttpServer())
+        .post('/equipment')
+        .auth(accessToken, { type: 'bearer' })
+        .send({ name: `E2E ${run} admin` })
+        .expect(201);
+    });
+  });
+});

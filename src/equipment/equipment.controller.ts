@@ -1,12 +1,14 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
@@ -20,6 +22,11 @@ import {
 import { EquipmentService } from './equipment.service';
 
 @ApiTags('equipment')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({
+  type: ErrorResponseDto,
+  description: 'Missing or invalid access token',
+})
 @Controller('equipment')
 export class EquipmentController {
   constructor(private readonly equipmentService: EquipmentService) {}
