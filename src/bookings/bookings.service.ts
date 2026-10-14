@@ -39,45 +39,58 @@ export class BookingsService {
       throw new BadRequestException(timeError);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      // FOR UPDATE locks the room row until the transaction ends: a parallel
-      // booking of the same room waits here and then sees the first booking
-      const [room] = await tx.$queryRaw<
-        { isActive: boolean; capacity: number }[]
-      >`SELECT "isActive", capacity FROM "Room" WHERE id = ${dto.roomId}::uuid FOR UPDATE`;
-      if (!room) {
-        throw new NotFoundException('Room not found');
-      }
+    const room = await this.prisma.room.findUnique({
+      where: { id: dto.roomId },
+      select: { isActive: true, capacity: true },
+    });
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
 
-      const roomError = checkRoomForBooking(room, dto.attendeesCount);
-      if (roomError) {
-        throw new BadRequestException(roomError);
-      }
+    const roomError = checkRoomForBooking(room, dto.attendeesCount);
+    if (roomError) {
+      throw new BadRequestException(roomError);
+    }
 
-      const overlapping = await tx.booking.findFirst({
-        where: {
-          roomId: dto.roomId,
-          status: 'confirmed',
-          startsAt: { lt: endsAt },
-          endsAt: { gt: startsAt },
-        },
-        select: { id: true },
-      });
-      if (overlapping) {
-        throw new ConflictException('Room is already booked for this time');
-      }
+    return this.insertBooking({
+      title: dto.title,
+      startsAt,
+      endsAt,
+      attendeesCount: dto.attendeesCount,
+      roomId: dto.roomId,
+      userId,
+    });
+  }
 
-      return tx.booking.create({
-        data: {
-          title: dto.title,
-          startsAt,
-          endsAt,
-          attendeesCount: dto.attendeesCount,
-          roomId: dto.roomId,
-          userId,
-        },
-        select: bookingSelect,
-      });
+  // INSERT ... ON CONFLICT DO NOTHING instead of prisma.booking.create():
+  // a plain INSERT can deadlock when many overlapping bookings are inserted at
+  // once, because the exclusion constraint is checked after the row is written.
+  // With ON CONFLICT Postgres checks the Booking_no_overlap constraint first and
+  // skips the row, so a taken slot returns no rows instead of an error
+  private async insertBooking(data: {
+    title: string;
+    startsAt: Date;
+    endsAt: Date;
+    attendeesCount: number;
+    roomId: string;
+    userId: string;
+  }): Promise<BookingResponseDto> {
+    const inserted = await this.prisma.$queryRaw<{ id: string }[]>`
+      INSERT INTO "Booking"
+        (id, title, "startsAt", "endsAt", "attendeesCount", "roomId", "userId", "updatedAt")
+      VALUES
+        (gen_random_uuid(), ${data.title}, ${data.startsAt}, ${data.endsAt},
+         ${data.attendeesCount}, ${data.roomId}::uuid, ${data.userId}::uuid, now())
+      ON CONFLICT DO NOTHING
+      RETURNING id`;
+
+    if (inserted.length === 0) {
+      throw new ConflictException('Room is already booked for this time');
+    }
+
+    return this.prisma.booking.findUniqueOrThrow({
+      where: { id: inserted[0].id },
+      select: bookingSelect,
     });
   }
 }
