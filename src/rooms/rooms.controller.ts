@@ -12,12 +12,15 @@ import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
+import { Role } from '../generated/prisma/client';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { ListRoomsQueryDto } from './dto/list-rooms-query.dto';
 import { RoomPageDto, RoomResponseDto } from './dto/room-response.dto';
@@ -46,6 +49,11 @@ export class RoomsController {
   }
 
   @Post()
+  @Roles(Role.admin)
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'Admin role required',
+  })
   @ApiOperation({ summary: 'Create a room' })
   @ApiCreatedResponse({ type: RoomResponseDto })
   @ApiConflictResponse({
@@ -57,6 +65,11 @@ export class RoomsController {
   }
 
   @Patch(':id')
+  @Roles(Role.admin)
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'Admin role required',
+  })
   @ApiOperation({
     summary: 'Update a room, including deactivation (isActive: false)',
   })

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -14,8 +15,10 @@ import { TokensService } from './tokens.service';
   providers: [
     AuthService,
     TokensService,
-    // Global guard: applies to every route in the app, not only to this module
+    // Global guards: apply to every route in the app, not only to this module.
+    // Order matters: JwtAuthGuard sets request.user, RolesGuard reads it
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AuthModule {}

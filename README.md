@@ -35,7 +35,7 @@ The API runs on http://localhost:3000, Swagger docs on http://localhost:3000/doc
 
 ### Seed data
 
-Fills the database with 3 equipment items and 8 rooms. The seed can be run more than once: existing records are skipped.
+Creates the admin account from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` and fills the database with 3 equipment items and 8 rooms. Registration through the API always creates a member, so the seed is the only way to get an admin. The seed can be run more than once: existing rooms and equipment are skipped, the admin's password is reset to the value from `.env`.
 
 ```bash
 npx prisma db seed
