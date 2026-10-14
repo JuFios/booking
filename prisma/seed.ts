@@ -1,4 +1,5 @@
 import { PrismaPg } from '@prisma/adapter-pg';
+import * as argon2 from 'argon2';
 import { PrismaClient } from '../src/generated/prisma/client';
 
 const EQUIPMENT = ['Projector', 'Whiteboard', 'Video conferencing'] as const;
@@ -47,6 +48,27 @@ const ROOMS: RoomSeed[] = [
     equipment: ['Video conferencing'],
   },
 ];
+
+// The only way to get an admin: registration through the API always creates a member.
+// Re-running the seed resets the admin's role and password to the values from .env
+async function seedAdmin(prisma: PrismaClient): Promise<string> {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password || password.length < 8) {
+    throw new Error(
+      'ADMIN_EMAIL and ADMIN_PASSWORD (at least 8 characters) must be set',
+    );
+  }
+
+  const passwordHash = await argon2.hash(password);
+  await prisma.user.upsert({
+    where: { email },
+    update: { role: 'admin', passwordHash },
+    create: { email, name: 'Admin', role: 'admin', passwordHash },
+  });
+
+  return email;
+}
 
 async function seedEquipment(prisma: PrismaClient): Promise<void> {
   for (const name of EQUIPMENT) {
@@ -142,6 +164,9 @@ async function main(): Promise<void> {
   });
 
   try {
+    const adminEmail = await seedAdmin(prisma);
+    console.log(`Seeded admin ${adminEmail}`);
+
     await seedEquipment(prisma);
     await seedRooms(prisma);
     console.log(

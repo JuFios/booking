@@ -11,6 +11,8 @@ async function bootstrap() {
     .setTitle('Booking API')
     .setDescription('REST API for booking meeting rooms')
     .setVersion('1.0')
+    // Adds the Authorize button: the access token is then sent as Authorization: Bearer <token>
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);

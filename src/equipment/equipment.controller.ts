@@ -1,14 +1,19 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { Role } from '../generated/prisma/client';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import {
   EquipmentPageDto,
@@ -17,6 +22,11 @@ import {
 import { EquipmentService } from './equipment.service';
 
 @ApiTags('equipment')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({
+  type: ErrorResponseDto,
+  description: 'Missing or invalid access token',
+})
 @Controller('equipment')
 export class EquipmentController {
   constructor(private readonly equipmentService: EquipmentService) {}
@@ -30,6 +40,11 @@ export class EquipmentController {
   }
 
   @Post()
+  @Roles(Role.admin)
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'Admin role required',
+  })
   @ApiOperation({ summary: 'Create equipment' })
   @ApiCreatedResponse({ type: EquipmentResponseDto })
   @ApiBadRequestResponse({ type: ErrorResponseDto })
