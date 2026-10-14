@@ -1,6 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
 import { EquipmentModule } from './equipment/equipment.module';
@@ -16,6 +17,7 @@ import { RoomsModule } from './rooms/rooms.module';
     }),
     PrismaModule,
     HealthModule,
+    AuthModule,
     EquipmentModule,
     RoomsModule,
   ],
