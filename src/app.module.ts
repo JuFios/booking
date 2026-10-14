@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
+import { BookingsModule } from './bookings/bookings.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
 import { EquipmentModule } from './equipment/equipment.module';
@@ -24,6 +25,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     EquipmentModule,
     RoomsModule,
+    BookingsModule,
   ],
   providers: [
     {
