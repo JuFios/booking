@@ -81,6 +81,10 @@ How each operation works with the constraint:
 
 - **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
 - **Why the advisory lock in `PATCH`.** `UPDATE` has no `ON CONFLICT`, and parallel updates into one slot deadlock the same way. The lock makes time changes within one room run one after another; it is taken only when the time changes and is released at the end of the transaction. The constraint still decides whether the new time is free.
+  - Measured with a one-off script, without the lock: 20 connections send `UPDATE` into one slot at the same moment, 10 rounds. 38 of 200 updates were aborted as a deadlock (`40P01`), each would be a 500.
+  - Through the API the requests reach the database less simultaneously, so the `PATCH` race test passes even without the lock. It checks the outcome (one 200, the rest 409) and that `23P01` turns into 409, not the deadlock itself.
+  - `hashtext(roomId)` turns the uuid into the integer key that `pg_advisory_xact_lock` needs. Two rooms with the same hash only wait for each other, which is harmless.
+  - The lock is not a second protection against double booking: without it the result stays correct, only some requests would fail with 500.
 
 Two solutions were tried, both are in the commit history: a transaction that locks the room row with `SELECT … FOR UPDATE`, and the exclusion constraint. The constraint was kept: `FOR UPDATE` protects only the code paths that remember to take the lock, while the constraint holds for every writer, including future endpoints and scripts.
 
@@ -91,6 +95,8 @@ Two solutions were tried, both are in the commit history: a transaction that loc
 | Naive (`SELECT`, then `INSERT`) | 7–8 | 12–13 | 7–8 |
 | `SELECT … FOR UPDATE` on the room | 1 | 19 | 1 |
 | Exclusion constraint (final) | 1 | 19 | 1 |
+
+The second test in the same file moves 20 bookings into one slot with parallel `PATCH /bookings/:id`: one 200, nineteen 409, one booking in the slot.
 
 ## Performance
 
