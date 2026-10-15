@@ -6,6 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
+import {
+  getForeignKeyViolation,
+  isExclusionViolation,
+} from '../common/utils/database-errors';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
 import { BookingStatus, Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,6 +33,11 @@ export const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
 export const NOT_OWNER = 'You can access only your own bookings';
 export const NOTHING_TO_UPDATE =
   'At least one of title, startsAt, endsAt is required';
+
+// Prisma's defaults (maxWait 2 s, timeout 5 s) are too short when many bookings
+// of one room wait for each other's locks. If even these run out, the global
+// filter turns P2028 into 503 instead of 500.
+const BOOKING_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 10_000 };
 
 const bookingSelect = {
   id: true,
@@ -72,7 +81,7 @@ export class BookingsService {
         roomId: dto.roomId,
         userId,
       } satisfies Prisma.BookingUncheckedCreateInput);
-    });
+    }, BOOKING_TRANSACTION_OPTIONS);
 
     return this.getBooking(bookingId);
   }
@@ -155,9 +164,9 @@ export class BookingsService {
           where: { id, status: BookingStatus.confirmed },
           data: { title: dto.title, ...(timeChanged && { startsAt, endsAt }) },
         });
-      })
+      }, BOOKING_TRANSACTION_OPTIONS)
       .catch((error: unknown) => {
-        if (isOverlapError(error)) {
+        if (isExclusionViolation(error)) {
           throw new ConflictException(ROOM_ALREADY_BOOKED);
         }
         throw error;
@@ -335,9 +344,6 @@ export class BookingsService {
       if (constraint === 'Booking_userId_fkey') {
         throw new NotFoundException('User not found');
       }
-      if (constraint === 'Booking_roomId_fkey') {
-        throw new NotFoundException('Room not found');
-      }
       throw error;
     });
 
@@ -347,28 +353,4 @@ export class BookingsService {
 
     return inserted[0].id;
   }
-}
-
-interface DatabaseErrorCause {
-  originalCode?: string;
-  constraint?: { index?: string };
-}
-
-function getDatabaseErrorCause(error: unknown): DatabaseErrorCause | undefined {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
-    return undefined;
-  }
-
-  const meta = error.meta as
-    { driverAdapterError?: { cause?: DatabaseErrorCause } } | undefined;
-  return meta?.driverAdapterError?.cause;
-}
-
-function isOverlapError(error: unknown): boolean {
-  return getDatabaseErrorCause(error)?.originalCode === '23P01';
-}
-
-function getForeignKeyViolation(error: unknown): string | undefined {
-  const cause = getDatabaseErrorCause(error);
-  return cause?.originalCode === '23503' ? cause.constraint?.index : undefined;
 }

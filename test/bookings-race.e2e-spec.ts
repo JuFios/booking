@@ -4,11 +4,10 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import { DAY_MS, MINUTE_MS } from '../src/common/utils/time';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const PARALLEL_REQUESTS = 20;
-const MINUTE_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
 
 // 10:00 UTC a given number of days from today
 const daysAhead = (days: number): Date => {

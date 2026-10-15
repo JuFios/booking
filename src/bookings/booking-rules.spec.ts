@@ -1,3 +1,4 @@
+import { HOUR_MS } from '../common/utils/time';
 import {
   availabilityWindow,
   checkBookingTime,
@@ -8,7 +9,6 @@ import {
 const now = new Date('2026-10-20T10:30:00Z');
 const at = (time: string) => new Date(`2026-10-20T${time}Z`);
 const later = (date: Date, ms: number) => new Date(date.getTime() + ms);
-const HOUR_MS = 60 * 60 * 1000;
 
 describe('checkBookingTime: start and end relative to now', () => {
   describe('new booking', () => {

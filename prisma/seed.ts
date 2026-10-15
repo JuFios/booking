@@ -1,6 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
+import { DAY_MS, HOUR_MS } from '../src/common/utils/time';
 import { PrismaClient } from '../src/generated/prisma/client';
 
 const EQUIPMENT = ['Projector', 'Whiteboard', 'Video conferencing'] as const;
@@ -109,8 +110,6 @@ const BULK_USERS = 200;
 const BULK_BOOKINGS_PER_ROOM = 20;
 const BULK_BOOKINGS_FROM = Date.UTC(2026, 8, 1);
 const BULK_INSERT_CHUNK = 5000;
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 
 async function seedBulk(prisma: PrismaClient): Promise<void> {
   const equipmentNames = Array.from(

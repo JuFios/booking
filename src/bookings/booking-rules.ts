@@ -1,3 +1,4 @@
+import { DAY_MS, MINUTE_MS } from '../common/utils/time';
 import { Role } from '../generated/prisma/client';
 
 // Pure functions without database access: easy to unit test.
@@ -5,9 +6,12 @@ import { Role } from '../generated/prisma/client';
 
 export const MIN_BOOKING_DURATION_MS = 15 * 60 * 1000;
 export const MAX_BOOKING_DURATION_MS = 8 * 60 * 60 * 1000;
-const MINUTE_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
 export const MAX_BOOKING_ADVANCE_MS = 365 * DAY_MS;
+
+// The latest start a booking made at `now` may have (inclusive)
+export function latestAllowedStart(now: Date): Date {
+  return new Date(now.getTime() + MAX_BOOKING_ADVANCE_MS);
+}
 
 // currentStartsAt is the start before a PATCH. A booking that is going on has
 // its start in the past: an unchanged start is allowed, only the end must be
@@ -35,10 +39,7 @@ export function checkBookingTime(
   if (startChanged && startsAt < now) {
     return 'startsAt must not be in the past';
   }
-  if (
-    startChanged &&
-    startsAt.getTime() - now.getTime() > MAX_BOOKING_ADVANCE_MS
-  ) {
+  if (startChanged && startsAt > latestAllowedStart(now)) {
     return 'startsAt must be at most 365 days ahead';
   }
   if (endsAt <= now) {
@@ -88,7 +89,7 @@ export function availabilityWindow(
   const dayEnd = new Date(dayStart.getTime() + DAY_MS);
   const nextMinute = new Date(Math.ceil(now.getTime() / MINUTE_MS) * MINUTE_MS);
   const from = nextMinute > dayStart ? nextMinute : dayStart;
-  const lastStart = new Date(now.getTime() + MAX_BOOKING_ADVANCE_MS);
+  const lastStart = latestAllowedStart(now);
   const to = lastStart < dayEnd ? lastStart : dayEnd;
 
   return from < to ? { from, to } : undefined;

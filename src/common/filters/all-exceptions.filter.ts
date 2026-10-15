@@ -10,6 +10,10 @@ import { Request, Response } from 'express';
 import { STATUS_CODES } from 'node:http';
 import { Prisma } from '../../generated/prisma/client';
 import { ErrorResponseDto } from '../dto/error-response.dto';
+import {
+  isExclusionViolation,
+  isForeignKeyViolation,
+} from '../utils/database-errors';
 
 interface ResolvedError {
   statusCode: number;
@@ -94,9 +98,35 @@ export class AllExceptionsFilter implements ExceptionFilter {
           statusCode: HttpStatus.NOT_FOUND,
           message: `${model} not found`,
         };
+      case 'P2028': // interactive transaction could not start or ran out of time
+        return {
+          statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+          message: 'Database is busy, try again',
+        };
       default:
-        return undefined;
+        return this.resolveDatabaseConstraint(exception, model);
     }
+  }
+
+  // Constraint violations of raw queries arrive without a specific Prisma code
+  private resolveDatabaseConstraint(
+    exception: Prisma.PrismaClientKnownRequestError,
+    model: string,
+  ): ResolvedError | undefined {
+    if (isExclusionViolation(exception)) {
+      return {
+        statusCode: HttpStatus.CONFLICT,
+        message: `${model} conflicts with an existing record`,
+      };
+    }
+    if (isForeignKeyViolation(exception)) {
+      return {
+        statusCode: HttpStatus.CONFLICT,
+        message: `${model} refers to a record that does not exist`,
+      };
+    }
+
+    return undefined;
   }
 
   // Errors from Express middleware (e.g. body-parser's 413) are not
