@@ -22,15 +22,18 @@ import {
   type AuthenticatedUser,
   CurrentUser,
 } from '../common/decorators/current-user.decorator';
-import { BookingsService } from './bookings.service';
+import {
+  BookingsService,
+  NOT_OWNER,
+  NOTHING_TO_UPDATE,
+  ROOM_ALREADY_BOOKED,
+} from './bookings.service';
 import { BookingPageDto, BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 
 const BOOKING_PATH = '/bookings/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d';
-const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
-const NOT_OWNER = 'You can access only your own bookings';
 
 @ApiTags('bookings')
 @ApiBearerAuth()
@@ -62,6 +65,7 @@ export class BookingsController {
       },
       'Booking must last at least 15 minutes',
       'startsAt must not be in the past',
+      'startsAt must be at most 365 days ahead',
       'Room is not active',
       'attendeesCount must not exceed the room capacity (6)',
     ],
@@ -154,6 +158,7 @@ export class BookingsController {
         message: 'Validation failed',
         details: ['endsAt must be in UTC, e.g. 2026-10-20T10:00:00Z'],
       },
+      NOTHING_TO_UPDATE,
       'Booking must last at least 15 minutes',
       'endsAt must be in the future',
       'Room is not active',

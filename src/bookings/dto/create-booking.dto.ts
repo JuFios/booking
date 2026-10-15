@@ -34,7 +34,7 @@ export class CreateBookingDto {
 
   @ApiProperty({
     example: '2026-10-20T10:00:00.000Z',
-    description: 'ISO 8601 in UTC',
+    description: 'ISO 8601 in UTC, from now up to 365 days ahead',
   })
   @IsISO8601({ strict: true })
   @Matches(UTC_DATE_TIME, {

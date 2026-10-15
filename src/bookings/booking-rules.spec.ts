@@ -1,7 +1,13 @@
-import { checkBookingTime, hasEnded } from './booking-rules';
+import {
+  checkBookingTime,
+  hasEnded,
+  MAX_BOOKING_ADVANCE_MS,
+} from './booking-rules';
 
 const now = new Date('2026-10-20T10:30:00Z');
 const at = (time: string) => new Date(`2026-10-20T${time}Z`);
+const later = (date: Date, ms: number) => new Date(date.getTime() + ms);
+const HOUR_MS = 60 * 60 * 1000;
 
 describe('checkBookingTime: start and end relative to now', () => {
   describe('new booking', () => {
@@ -12,6 +18,20 @@ describe('checkBookingTime: start and end relative to now', () => {
     it('rejects a booking that starts in the past', () => {
       expect(checkBookingTime(at('10:00'), at('11:00'), now)).toBe(
         'startsAt must not be in the past',
+      );
+    });
+
+    it('accepts a start exactly 365 days ahead', () => {
+      const startsAt = later(now, MAX_BOOKING_ADVANCE_MS);
+      expect(
+        checkBookingTime(startsAt, later(startsAt, HOUR_MS), now),
+      ).toBeUndefined();
+    });
+
+    it('rejects a start more than 365 days ahead', () => {
+      const startsAt = later(now, MAX_BOOKING_ADVANCE_MS + 60 * 1000);
+      expect(checkBookingTime(startsAt, later(startsAt, HOUR_MS), now)).toBe(
+        'startsAt must be at most 365 days ahead',
       );
     });
   });

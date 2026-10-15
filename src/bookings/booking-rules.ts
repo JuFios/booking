@@ -7,10 +7,12 @@ export const MIN_BOOKING_DURATION_MS = 15 * 60 * 1000;
 export const MAX_BOOKING_DURATION_MS = 8 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
+export const MAX_BOOKING_ADVANCE_MS = 365 * DAY_MS;
 
 // currentStartsAt is the start before a PATCH. A booking that is going on has
 // its start in the past: an unchanged start is allowed, only the end must be
-// ahead (so the meeting can be extended). A new start must not be in the past.
+// ahead (so the meeting can be extended). A new start must not be in the past
+// and not more than 365 days ahead.
 export function checkBookingTime(
   startsAt: Date,
   endsAt: Date,
@@ -32,6 +34,12 @@ export function checkBookingTime(
   const startChanged = startsAt.getTime() !== currentStartsAt?.getTime();
   if (startChanged && startsAt < now) {
     return 'startsAt must not be in the past';
+  }
+  if (
+    startChanged &&
+    startsAt.getTime() - now.getTime() > MAX_BOOKING_ADVANCE_MS
+  ) {
+    return 'startsAt must be at most 365 days ahead';
   }
   if (endsAt <= now) {
     return 'endsAt must be in the future';

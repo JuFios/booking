@@ -24,7 +24,11 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 
-const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
+// Also used in the Swagger examples of BookingsController
+export const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
+export const NOT_OWNER = 'You can access only your own bookings';
+export const NOTHING_TO_UPDATE =
+  'At least one of title, startsAt, endsAt is required';
 
 const bookingSelect = {
   id: true,
@@ -68,6 +72,8 @@ export class BookingsService {
       throw new BadRequestException(roomError);
     }
 
+    // satisfies checks the object against Prisma's create type: a new required
+    // column in Booking stops compiling here and must be added to the raw INSERT
     return this.insertBooking({
       title: dto.title,
       startsAt,
@@ -75,7 +81,7 @@ export class BookingsService {
       attendeesCount: dto.attendeesCount,
       roomId: dto.roomId,
       userId,
-    });
+    } satisfies Prisma.BookingUncheckedCreateInput);
   }
 
   async findAll(
@@ -115,13 +121,17 @@ export class BookingsService {
     id: string,
     dto: UpdateBookingDto,
   ): Promise<BookingResponseDto> {
+    const timeChanged = dto.startsAt !== undefined || dto.endsAt !== undefined;
+    if (dto.title === undefined && !timeChanged) {
+      throw new BadRequestException(NOTHING_TO_UPDATE);
+    }
+
     const booking = await this.findAccessibleBooking(user, id);
     const now = new Date();
     if (hasEnded(booking, now)) {
       throw new BadRequestException('Ended booking cannot be changed');
     }
 
-    const timeChanged = dto.startsAt !== undefined || dto.endsAt !== undefined;
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : booking.startsAt;
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : booking.endsAt;
 
@@ -248,7 +258,7 @@ export class BookingsService {
     }
 
     if (!canAccessBooking(user, booking.user.id)) {
-      throw new ForbiddenException('You can access only your own bookings');
+      throw new ForbiddenException(NOT_OWNER);
     }
 
     return booking;
@@ -291,7 +301,9 @@ export class BookingsService {
   // a plain INSERT can deadlock when many overlapping bookings are inserted at
   // once, because the exclusion constraint is checked after the row is written.
   // With ON CONFLICT Postgres checks the Booking_no_overlap constraint first and
-  // skips the row, so a taken slot returns no rows instead of an error
+  // skips the row, so a taken slot returns no rows instead of an error.
+  // ON CONSTRAINT limits this to Booking_no_overlap: any other conflict (e.g. a
+  // unique constraint added later) stays an error instead of a false 409
   private async insertBooking(data: {
     title: string;
     startsAt: Date;
@@ -306,7 +318,7 @@ export class BookingsService {
       VALUES
         (gen_random_uuid(), ${data.title}, ${data.startsAt}, ${data.endsAt},
          ${data.attendeesCount}, ${data.roomId}::uuid, ${data.userId}::uuid, now())
-      ON CONFLICT DO NOTHING
+      ON CONFLICT ON CONSTRAINT "Booking_no_overlap" DO NOTHING
       RETURNING id`.catch((error: unknown) => {
       const constraint = getForeignKeyViolation(error);
       if (constraint === 'Booking_userId_fkey') {

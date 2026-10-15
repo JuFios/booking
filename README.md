@@ -75,11 +75,11 @@ How each operation works with the constraint:
 
 | Operation | SQL | Slot is taken |
 |---|---|---|
-| `POST /bookings` | `INSERT … ON CONFLICT DO NOTHING RETURNING id` | no row is returned → 409 |
+| `POST /bookings` | `INSERT … ON CONFLICT ON CONSTRAINT "Booking_no_overlap" DO NOTHING RETURNING id` | no row is returned → 409 |
 | `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
 | `POST /bookings/:id/cancel` | `UPDATE … SET status = 'cancelled' WHERE status = 'confirmed'` | — (of parallel cancels only one changes the row) |
 
-- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks.
+- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
 - **Why the advisory lock in `PATCH`.** `UPDATE` has no `ON CONFLICT`, and parallel updates into one slot deadlock the same way. The lock makes time changes within one room run one after another; it is taken only when the time changes and is released at the end of the transaction. The constraint still decides whether the new time is free.
 
 Two solutions were tried, both are in the commit history: a transaction that locks the room row with `SELECT … FOR UPDATE`, and the exclusion constraint. The constraint was kept: `FOR UPDATE` protects only the code paths that remember to take the lock, while the constraint holds for every writer, including future endpoints and scripts.
