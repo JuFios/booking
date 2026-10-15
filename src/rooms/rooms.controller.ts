@@ -145,8 +145,12 @@ export class RoomsController {
   @ApiErrorResponse({
     status: HttpStatus.CONFLICT,
     path: ROOM_PATH,
-    description: 'Room with this name already exists',
-    examples: ['Room already exists'],
+    description:
+      'Room with this name already exists, or the new capacity is less than the attendees of an upcoming booking',
+    examples: [
+      'Room already exists',
+      'Room has upcoming bookings with 8 attendees',
+    ],
   })
   update(
     @Param('id', ParseUUIDPipe) id: string,

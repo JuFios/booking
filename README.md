@@ -75,8 +75,8 @@ How each operation works with the constraint:
 
 | Operation | SQL | Slot is taken |
 |---|---|---|
-| `POST /bookings` | `INSERT … ON CONFLICT ON CONSTRAINT "Booking_no_overlap" DO NOTHING RETURNING id` | no row is returned → 409 |
-| `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
+| `POST /bookings` | `SELECT … FROM "Room" … FOR SHARE`, then `INSERT … ON CONFLICT ON CONSTRAINT "Booking_no_overlap" DO NOTHING RETURNING id` | no row is returned → 409 |
+| `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, `SELECT … FROM "Room" … FOR SHARE`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
 | `POST /bookings/:id/cancel` | `UPDATE … SET status = 'cancelled' WHERE status = 'confirmed'` | — (of parallel cancels only one changes the row) |
 
 - **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
@@ -97,6 +97,16 @@ Two solutions were tried, both are in the commit history: a transaction that loc
 | Exclusion constraint (final) | 1 | 19 | 1 |
 
 The second test in the same file moves 20 bookings into one slot with parallel `PATCH /bookings/:id`: one 200, nineteen 409, one booking in the slot.
+
+### Room changes and bookings
+
+A booking also depends on its room: the room must be active and `attendeesCount` must not exceed `capacity`. Without a lock a booking could pass these checks while an admin deactivates the room or lowers its capacity in a parallel request.
+
+- `POST /bookings` and a time change in `PATCH /bookings/:id` read the room with `FOR SHARE` in the same transaction as the write.
+- `PATCH /rooms/:id` locks the room with `FOR NO KEY UPDATE` before changing it. A new `capacity` must not be less than `attendeesCount` of any confirmed booking that has not ended yet, otherwise 409.
+- `FOR SHARE` and `FOR NO KEY UPDATE` wait for each other, so a room change and a booking in that room run one after another and each sees the result of the other. Bookings do not wait for each other: two `FOR SHARE` locks on one row are compatible.
+- `FOR NO KEY UPDATE` instead of `FOR UPDATE`: it does not block the foreign key checks of new bookings, which take `FOR KEY SHARE` on the room.
+- Parallel `PATCH /rooms/:id` with `equipmentIds` also run one after another, so they no longer collide on the room–equipment links.
 
 ## Performance
 

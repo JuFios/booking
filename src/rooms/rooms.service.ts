@@ -1,10 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
-import { Prisma } from '../generated/prisma/client';
+import { BookingStatus, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { ListRoomsQueryDto } from './dto/list-rooms-query.dto';
@@ -95,19 +96,31 @@ export class RoomsService {
       await this.assertEquipmentExists(equipmentIds);
     }
 
-    const room = await this.prisma.room.update({
-      where: { id },
-      data: {
-        ...fields,
-        // the new list replaces the old one
-        ...(equipmentIds && {
-          equipment: {
-            deleteMany: {},
-            create: equipmentIds.map((equipmentId) => ({ equipmentId })),
-          },
-        }),
-      },
-      select: roomSelect,
+    const room = await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Room" WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
+      if (locked.length === 0) {
+        throw new NotFoundException('Room not found');
+      }
+
+      if (fields.capacity !== undefined) {
+        await assertCapacityFitsUpcomingBookings(tx, id, fields.capacity);
+      }
+
+      return tx.room.update({
+        where: { id },
+        data: {
+          ...fields,
+          // the new list replaces the old one
+          ...(equipmentIds && {
+            equipment: {
+              deleteMany: {},
+              create: equipmentIds.map((equipmentId) => ({ equipmentId })),
+            },
+          }),
+        },
+        select: roomSelect,
+      });
     });
 
     return toRoomResponse(room);
@@ -146,6 +159,27 @@ export class RoomsService {
         `Unknown equipment ids: ${unknownIds.join(', ')}`,
       );
     }
+  }
+}
+
+async function assertCapacityFitsUpcomingBookings(
+  tx: Prisma.TransactionClient,
+  roomId: string,
+  capacity: number,
+): Promise<void> {
+  const { _max } = await tx.booking.aggregate({
+    where: {
+      roomId,
+      status: BookingStatus.confirmed,
+      endsAt: { gt: new Date() },
+    },
+    _max: { attendeesCount: true },
+  });
+
+  if (_max.attendeesCount !== null && _max.attendeesCount > capacity) {
+    throw new ConflictException(
+      `Room has upcoming bookings with ${_max.attendeesCount} attendees`,
+    );
   }
 }
 

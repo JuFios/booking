@@ -59,29 +59,22 @@ export class BookingsService {
       throw new BadRequestException(timeError);
     }
 
-    const room = await this.prisma.room.findUnique({
-      where: { id: dto.roomId },
-      select: { isActive: true, capacity: true },
+    const bookingId = await this.prisma.$transaction(async (tx) => {
+      await this.checkRoomUnderLock(tx, dto.roomId, dto.attendeesCount);
+
+      // satisfies checks the object against Prisma's create type: a new required
+      // column in Booking stops compiling here and must be added to the raw INSERT
+      return this.insertBooking(tx, {
+        title: dto.title,
+        startsAt,
+        endsAt,
+        attendeesCount: dto.attendeesCount,
+        roomId: dto.roomId,
+        userId,
+      } satisfies Prisma.BookingUncheckedCreateInput);
     });
-    if (!room) {
-      throw new NotFoundException('Room not found');
-    }
 
-    const roomError = checkRoomForBooking(room, dto.attendeesCount);
-    if (roomError) {
-      throw new BadRequestException(roomError);
-    }
-
-    // satisfies checks the object against Prisma's create type: a new required
-    // column in Booking stops compiling here and must be added to the raw INSERT
-    return this.insertBooking({
-      title: dto.title,
-      startsAt,
-      endsAt,
-      attendeesCount: dto.attendeesCount,
-      roomId: dto.roomId,
-      userId,
-    } satisfies Prisma.BookingUncheckedCreateInput);
+    return this.getBooking(bookingId);
   }
 
   async findAll(
@@ -145,20 +138,17 @@ export class BookingsService {
       if (timeError) {
         throw new BadRequestException(timeError);
       }
-
-      const roomError = checkRoomForBooking(
-        booking.room,
-        booking.attendeesCount,
-      );
-      if (roomError) {
-        throw new BadRequestException(roomError);
-      }
     }
 
     const { count } = await this.prisma
       .$transaction(async (tx) => {
         if (timeChanged) {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
+          await this.checkRoomUnderLock(
+            tx,
+            booking.room.id,
+            booking.attendeesCount,
+          );
         }
 
         return tx.booking.updateMany({
@@ -242,7 +232,7 @@ export class BookingsService {
         endsAt: true,
         attendeesCount: true,
         user: { select: { id: true } },
-        room: { select: { id: true, isActive: true, capacity: true } },
+        room: { select: { id: true } },
       },
     });
 
@@ -262,6 +252,24 @@ export class BookingsService {
     }
 
     return booking;
+  }
+
+  private async checkRoomUnderLock(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    attendeesCount: number,
+  ): Promise<void> {
+    const [room] = await tx.$queryRaw<
+      { isActive: boolean; capacity: number }[]
+    >`SELECT "isActive", capacity FROM "Room" WHERE id = ${roomId}::uuid FOR SHARE`;
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
+
+    const roomError = checkRoomForBooking(room, attendeesCount);
+    if (roomError) {
+      throw new BadRequestException(roomError);
+    }
   }
 
   private getBooking(id: string): Promise<BookingResponseDto> {
@@ -304,15 +312,18 @@ export class BookingsService {
   // skips the row, so a taken slot returns no rows instead of an error.
   // ON CONSTRAINT limits this to Booking_no_overlap: any other conflict (e.g. a
   // unique constraint added later) stays an error instead of a false 409
-  private async insertBooking(data: {
-    title: string;
-    startsAt: Date;
-    endsAt: Date;
-    attendeesCount: number;
-    roomId: string;
-    userId: string;
-  }): Promise<BookingResponseDto> {
-    const inserted = await this.prisma.$queryRaw<{ id: string }[]>`
+  private async insertBooking(
+    tx: Prisma.TransactionClient,
+    data: {
+      title: string;
+      startsAt: Date;
+      endsAt: Date;
+      attendeesCount: number;
+      roomId: string;
+      userId: string;
+    },
+  ): Promise<string> {
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO "Booking"
         (id, title, "startsAt", "endsAt", "attendeesCount", "roomId", "userId", "updatedAt")
       VALUES
@@ -334,7 +345,7 @@ export class BookingsService {
       throw new ConflictException(ROOM_ALREADY_BOOKED);
     }
 
-    return this.getBooking(inserted[0].id);
+    return inserted[0].id;
   }
 }
 
