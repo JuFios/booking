@@ -121,7 +121,12 @@ export class BookingsService {
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : booking.endsAt;
 
     if (timeChanged) {
-      const timeError = checkBookingTime(startsAt, endsAt, new Date());
+      const timeError = checkBookingTime(
+        startsAt,
+        endsAt,
+        new Date(),
+        booking.startsAt,
+      );
       if (timeError) {
         throw new BadRequestException(timeError);
       }

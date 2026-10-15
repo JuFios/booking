@@ -155,6 +155,7 @@ export class BookingsController {
         details: ['endsAt must be in UTC, e.g. 2026-10-20T10:00:00Z'],
       },
       'Booking must last at least 15 minutes',
+      'endsAt must be in the future',
       'Room is not active',
       'Cancelled booking cannot be changed',
     ],
