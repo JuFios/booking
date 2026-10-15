@@ -124,8 +124,12 @@ export class AuthController {
   @ApiErrorResponse({
     status: HttpStatus.UNAUTHORIZED,
     path: '/auth/logout',
-    description: 'Missing or invalid access token',
-    examples: ['Missing access token', 'Invalid or expired access token'],
+    description: 'Missing or invalid access token, or invalid refresh token',
+    examples: [
+      'Missing access token',
+      'Invalid or expired access token',
+      'Invalid refresh token',
+    ],
   })
   logout(
     @CurrentUser() user: AuthenticatedUser,
