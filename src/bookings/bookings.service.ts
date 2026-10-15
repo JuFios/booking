@@ -38,6 +38,8 @@ export const NOTHING_TO_UPDATE =
 // Prisma's defaults (maxWait 2 s, timeout 5 s) are too short when many bookings
 // of one room wait for each other's locks. If even these run out, the global
 // filter turns P2028 into 503 instead of 500.
+const CANCELLED_BOOKING_CHANGE = 'Cancelled booking cannot be changed';
+
 const BOOKING_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 10_000 };
 
 const bookingSelect = {
@@ -130,41 +132,36 @@ export class BookingsService {
     }
 
     const booking = await this.findAccessibleBooking(user, id);
-    const now = new Date();
-    if (hasEnded(booking, now)) {
-      throw new BadRequestException('Ended booking cannot be changed');
-    }
-
-    const startsAt = dto.startsAt ? new Date(dto.startsAt) : booking.startsAt;
-    const endsAt = dto.endsAt ? new Date(dto.endsAt) : booking.endsAt;
-
+    // Rejects an obviously wrong request before the room lock is taken
+    this.assertEditable(booking, new Date());
     if (timeChanged) {
-      const timeError = checkBookingTime(
-        startsAt,
-        endsAt,
-        now,
-        booking.startsAt,
-      );
-      if (timeError) {
-        throw new BadRequestException(timeError);
-      }
+      this.resolveNewTimes(booking, dto, new Date());
     }
 
-    const { count } = await this.prisma
+    await this.prisma
       .$transaction(async (tx) => {
-        if (timeChanged) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
-          await this.checkRoomUnderLock(
-            tx,
-            booking.room.id,
-            booking.attendeesCount,
-          );
+        if (!timeChanged) {
+          return this.updateConfirmed(tx, id, { title: dto.title });
         }
 
-        return tx.booking.updateMany({
-          where: { id, status: BookingStatus.confirmed },
-          data: { title: dto.title, ...(timeChanged && { startsAt, endsAt }) },
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
+        // The booking may have changed while this request waited for the lock:
+        // the rules are checked, and the missing field is filled, from its
+        // current state, not from the first read
+        const current = await tx.booking.findUniqueOrThrow({
+          where: { id },
+          select: { startsAt: true, endsAt: true, status: true },
         });
+        const now = new Date();
+        this.assertEditable(current, now);
+        const times = this.resolveNewTimes(current, dto, now);
+        await this.checkRoomUnderLock(
+          tx,
+          booking.room.id,
+          booking.attendeesCount,
+        );
+
+        return this.updateConfirmed(tx, id, { title: dto.title, ...times });
       }, BOOKING_TRANSACTION_OPTIONS)
       .catch((error: unknown) => {
         if (isExclusionViolation(error)) {
@@ -172,9 +169,6 @@ export class BookingsService {
         }
         throw error;
       });
-    if (count === 0) {
-      throw new BadRequestException('Cancelled booking cannot be changed');
-    }
 
     return this.getBooking(id);
   }
@@ -240,6 +234,7 @@ export class BookingsService {
       select: {
         startsAt: true,
         endsAt: true,
+        status: true,
         attendeesCount: true,
         user: { select: { id: true } },
         room: { select: { id: true } },
@@ -247,6 +242,50 @@ export class BookingsService {
     });
 
     return this.assertCanAccess(user, booking);
+  }
+
+  private assertEditable(
+    booking: { endsAt: Date; status: BookingStatus },
+    now: Date,
+  ): void {
+    if (hasEnded(booking, now)) {
+      throw new BadRequestException('Ended booking cannot be changed');
+    }
+    if (booking.status === BookingStatus.cancelled) {
+      throw new BadRequestException(CANCELLED_BOOKING_CHANGE);
+    }
+  }
+
+  // The new times of a PATCH: a field that is not sent keeps its current value
+  private resolveNewTimes(
+    current: { startsAt: Date; endsAt: Date },
+    dto: UpdateBookingDto,
+    now: Date,
+  ): { startsAt: Date; endsAt: Date } {
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : current.startsAt;
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : current.endsAt;
+
+    const timeError = checkBookingTime(startsAt, endsAt, now, current.startsAt);
+    if (timeError) {
+      throw new BadRequestException(timeError);
+    }
+
+    return { startsAt, endsAt };
+  }
+
+  // The status filter makes a booking cancelled in the meantime fail here
+  private async updateConfirmed(
+    tx: Prisma.TransactionClient,
+    id: string,
+    data: Prisma.BookingUpdateManyMutationInput,
+  ): Promise<void> {
+    const { count } = await tx.booking.updateMany({
+      where: { id, status: BookingStatus.confirmed },
+      data,
+    });
+    if (count === 0) {
+      throw new BadRequestException(CANCELLED_BOOKING_CHANGE);
+    }
   }
 
   private assertCanAccess<T extends { user: { id: string } }>(

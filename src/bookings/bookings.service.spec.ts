@@ -1,6 +1,6 @@
+import { BookingStatus, Role } from '../generated/prisma/client';
 import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { HOUR_MS } from '../common/utils/time';
-import { Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BookingsService } from './bookings.service';
 
@@ -8,16 +8,34 @@ const ROOM_ID = '8d3c1d52-0f6a-4b52-9c0e-1d2f3a4b5c6d';
 const BOOKING_ID = '5a1f9c3e-7b2d-4e8a-a1c4-9e0b6d2f7a31';
 const user: AuthenticatedUser = { id: 'user-1', role: Role.member };
 
-// PATCH takes pg_advisory_xact_lock before it writes: without it parallel time
-// changes into one slot deadlock (40P01 → 500). The e2e race test cannot see
-// that, because requests through the API barely overlap in the database.
-describe('BookingsService.update: advisory lock', () => {
-  const start = new Date(Date.now() + 24 * HOUR_MS);
+const start = new Date(Date.now() + 24 * HOUR_MS);
+const inHours = (hours: number) => new Date(start.getTime() + hours * HOUR_MS);
+
+interface BookingRow {
+  startsAt: Date;
+  endsAt: Date;
+  status: BookingStatus;
+}
+
+describe('BookingsService.update', () => {
   const calls: string[] = [];
+  let updateData: unknown;
+  let snapshot: BookingRow;
+  let current: BookingRow;
   let service: BookingsService;
+
+  const confirmed = (): BookingRow => ({
+    startsAt: start,
+    endsAt: inHours(1),
+    status: BookingStatus.confirmed,
+  });
 
   beforeEach(() => {
     calls.length = 0;
+    updateData = undefined;
+    snapshot = confirmed();
+    current = confirmed();
+
     const tx = {
       $executeRaw: jest.fn(
         (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -30,21 +48,27 @@ describe('BookingsService.update: advisory lock', () => {
         return Promise.resolve([{ isActive: true, capacity: 10 }]);
       }),
       booking: {
-        updateMany: jest.fn(() => {
+        findUniqueOrThrow: jest.fn(() => {
+          calls.push('read current');
+          return Promise.resolve(current);
+        }),
+        updateMany: jest.fn(({ data }: { data: unknown }) => {
           calls.push('update');
+          updateData = data;
           return Promise.resolve({ count: 1 });
         }),
       },
     };
     const prisma = {
       booking: {
-        findUnique: jest.fn().mockResolvedValue({
-          startsAt: start,
-          endsAt: new Date(start.getTime() + HOUR_MS),
-          attendeesCount: 2,
-          user: { id: user.id },
-          room: { id: ROOM_ID },
-        }),
+        findUnique: jest.fn(() =>
+          Promise.resolve({
+            ...snapshot,
+            attendeesCount: 2,
+            user: { id: user.id },
+            room: { id: ROOM_ID },
+          }),
+        ),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: BOOKING_ID }),
       },
       $transaction: jest.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
@@ -52,21 +76,64 @@ describe('BookingsService.update: advisory lock', () => {
     service = new BookingsService(prisma as unknown as PrismaService);
   });
 
-  it('locks the room before checking it and writing when the time changes', async () => {
-    await service.update(user, BOOKING_ID, {
-      endsAt: new Date(start.getTime() + 2 * HOUR_MS).toISOString(),
+  // PATCH takes pg_advisory_xact_lock before it writes: without it parallel time
+  // changes into one slot deadlock (40P01 → 500). The e2e race test cannot see
+  // that, because requests through the API barely overlap in the database.
+  describe('advisory lock', () => {
+    it('locks the room, then reads, checks and writes when the time changes', async () => {
+      await service.update(user, BOOKING_ID, {
+        endsAt: inHours(2).toISOString(),
+      });
+
+      expect(calls).toEqual([
+        `SELECT pg_advisory_xact_lock(hashtext(?))|${ROOM_ID}`,
+        'read current',
+        'room check',
+        'update',
+      ]);
     });
 
-    expect(calls).toEqual([
-      `SELECT pg_advisory_xact_lock(hashtext(?))|${ROOM_ID}`,
-      'room check',
-      'update',
-    ]);
+    it('does not take the lock when only the title changes', async () => {
+      await service.update(user, BOOKING_ID, { title: 'New title' });
+
+      expect(calls).toEqual(['update']);
+    });
   });
 
-  it('does not take the lock when only the title changes', async () => {
-    await service.update(user, BOOKING_ID, { title: 'New title' });
+  describe('state read under the lock', () => {
+    it('fills the field that was not sent from the current row, not from the first read', async () => {
+      current = { ...confirmed(), startsAt: inHours(3), endsAt: inHours(4) };
 
-    expect(calls).toEqual(['update']);
+      await service.update(user, BOOKING_ID, {
+        endsAt: inHours(5).toISOString(),
+      });
+
+      expect(updateData).toMatchObject({
+        startsAt: inHours(3),
+        endsAt: inHours(5),
+      });
+    });
+
+    it('rejects a booking that was cancelled while waiting for the lock', async () => {
+      current = { ...confirmed(), status: BookingStatus.cancelled };
+
+      await expect(
+        service.update(user, BOOKING_ID, { endsAt: inHours(2).toISOString() }),
+      ).rejects.toThrow('Cancelled booking cannot be changed');
+      expect(calls).not.toContain('update');
+    });
+  });
+
+  describe('cancelled booking', () => {
+    it('is rejected before any lock, even when the new time is invalid', async () => {
+      snapshot = { ...confirmed(), status: BookingStatus.cancelled };
+
+      await expect(
+        service.update(user, BOOKING_ID, {
+          startsAt: new Date(Date.now() - HOUR_MS).toISOString(),
+        }),
+      ).rejects.toThrow('Cancelled booking cannot be changed');
+      expect(calls).toEqual([]);
+    });
   });
 });
