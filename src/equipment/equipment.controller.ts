@@ -1,17 +1,13 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Post, Query } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
-  ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { ApiErrorResponse } from '../common/decorators/api-error-response.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
-import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { Role } from '../generated/prisma/client';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
@@ -23,9 +19,11 @@ import { EquipmentService } from './equipment.service';
 
 @ApiTags('equipment')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({
-  type: ErrorResponseDto,
+@ApiErrorResponse({
+  status: HttpStatus.UNAUTHORIZED,
+  path: '/equipment',
   description: 'Missing or invalid access token',
+  examples: ['Missing access token', 'Invalid or expired access token'],
 })
 @Controller('equipment')
 export class EquipmentController {
@@ -33,24 +31,46 @@ export class EquipmentController {
 
   @Get()
   @ApiOperation({ summary: 'List equipment' })
-  @ApiOkResponse({ type: EquipmentPageDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiOkResponse({ type: EquipmentPageDto, description: 'A page of equipment' })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/equipment?limit=101',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['limit must not be greater than 100'],
+      },
+    ],
+  })
   findAll(@Query() query: PaginationQueryDto): Promise<EquipmentPageDto> {
     return this.equipmentService.findAll(query);
   }
 
   @Post()
   @Roles(Role.admin)
-  @ApiForbiddenResponse({
-    type: ErrorResponseDto,
+  @ApiErrorResponse({
+    status: HttpStatus.FORBIDDEN,
+    path: '/equipment',
     description: 'Admin role required',
+    examples: ['Insufficient permissions'],
   })
   @ApiOperation({ summary: 'Create equipment' })
-  @ApiCreatedResponse({ type: EquipmentResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiConflictResponse({
-    type: ErrorResponseDto,
+  @ApiCreatedResponse({
+    type: EquipmentResponseDto,
+    description: 'The created equipment',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/equipment',
+    examples: [
+      { message: 'Validation failed', details: ['name should not be empty'] },
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.CONFLICT,
+    path: '/equipment',
     description: 'Equipment with this name already exists',
+    examples: ['Equipment already exists'],
   })
   create(@Body() dto: CreateEquipmentDto): Promise<EquipmentResponseDto> {
     return this.equipmentService.create(dto);

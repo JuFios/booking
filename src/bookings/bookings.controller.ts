@@ -11,33 +11,34 @@ import {
   Query,
 } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
-  ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { ApiErrorResponse } from '../common/decorators/api-error-response.decorator';
 import {
   type AuthenticatedUser,
   CurrentUser,
 } from '../common/decorators/current-user.decorator';
-import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { BookingsService } from './bookings.service';
 import { BookingPageDto, BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 
+const BOOKING_PATH = '/bookings/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d';
+const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
+const NOT_OWNER = 'You can access only your own bookings';
+
 @ApiTags('bookings')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({
-  type: ErrorResponseDto,
+@ApiErrorResponse({
+  status: HttpStatus.UNAUTHORIZED,
+  path: '/bookings',
   description: 'Missing or invalid access token',
+  examples: ['Missing access token', 'Invalid or expired access token'],
 })
 @Controller('bookings')
 export class BookingsController {
@@ -45,19 +46,36 @@ export class BookingsController {
 
   @Post()
   @ApiOperation({ summary: 'Book a room' })
-  @ApiCreatedResponse({ type: BookingResponseDto })
-  @ApiBadRequestResponse({
-    type: ErrorResponseDto,
+  @ApiCreatedResponse({
+    type: BookingResponseDto,
+    description: 'The created booking',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/bookings',
     description:
       'Invalid input, wrong time range, inactive room or too many attendees',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['startsAt must be in UTC, e.g. 2026-10-20T10:00:00Z'],
+      },
+      'Booking must last at least 15 minutes',
+      'startsAt must not be in the past',
+      'Room is not active',
+      'attendeesCount must not exceed the room capacity (6)',
+    ],
   })
-  @ApiNotFoundResponse({
-    type: ErrorResponseDto,
-    description: 'Room not found',
+  @ApiErrorResponse({
+    status: HttpStatus.NOT_FOUND,
+    path: '/bookings',
+    description: 'Room not found, or the user of the token no longer exists',
+    examples: ['Room not found', 'User not found'],
   })
-  @ApiConflictResponse({
-    type: ErrorResponseDto,
-    description: 'Room is already booked for this time',
+  @ApiErrorResponse({
+    status: HttpStatus.CONFLICT,
+    path: '/bookings',
+    examples: [ROOM_ALREADY_BOOKED],
   })
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -70,8 +88,21 @@ export class BookingsController {
   @ApiOperation({
     summary: 'List bookings: a member sees own bookings, an admin sees all',
   })
-  @ApiOkResponse({ type: BookingPageDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiOkResponse({ type: BookingPageDto, description: 'A page of bookings' })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/bookings',
+    description: 'Invalid filters',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: [
+          'status must be one of the following values: confirmed, cancelled',
+        ],
+      },
+      'from must be earlier than to',
+    ],
+  })
   findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: ListBookingsQueryDto,
@@ -81,15 +112,22 @@ export class BookingsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a booking (owner or admin)' })
-  @ApiOkResponse({ type: BookingResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiForbiddenResponse({
-    type: ErrorResponseDto,
-    description: 'The booking belongs to another user',
+  @ApiOkResponse({ type: BookingResponseDto, description: 'The booking' })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/bookings/abc',
+    examples: ['Validation failed (uuid is expected)'],
   })
-  @ApiNotFoundResponse({
-    type: ErrorResponseDto,
-    description: 'Booking not found',
+  @ApiErrorResponse({
+    status: HttpStatus.FORBIDDEN,
+    path: BOOKING_PATH,
+    description: 'The booking belongs to another user',
+    examples: [NOT_OWNER],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.NOT_FOUND,
+    path: BOOKING_PATH,
+    examples: ['Booking not found'],
   })
   findOne(
     @CurrentUser() user: AuthenticatedUser,
@@ -102,23 +140,40 @@ export class BookingsController {
   @ApiOperation({
     summary: 'Change the title or time of a booking (owner or admin)',
   })
-  @ApiOkResponse({ type: BookingResponseDto })
-  @ApiBadRequestResponse({
-    type: ErrorResponseDto,
+  @ApiOkResponse({
+    type: BookingResponseDto,
+    description: 'The updated booking',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: BOOKING_PATH,
     description:
       'Invalid input, wrong time range, inactive room or cancelled booking',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['endsAt must be in UTC, e.g. 2026-10-20T10:00:00Z'],
+      },
+      'Booking must last at least 15 minutes',
+      'Room is not active',
+      'Cancelled booking cannot be changed',
+    ],
   })
-  @ApiForbiddenResponse({
-    type: ErrorResponseDto,
+  @ApiErrorResponse({
+    status: HttpStatus.FORBIDDEN,
+    path: BOOKING_PATH,
     description: 'The booking belongs to another user',
+    examples: [NOT_OWNER],
   })
-  @ApiNotFoundResponse({
-    type: ErrorResponseDto,
-    description: 'Booking not found',
+  @ApiErrorResponse({
+    status: HttpStatus.NOT_FOUND,
+    path: BOOKING_PATH,
+    examples: ['Booking not found'],
   })
-  @ApiConflictResponse({
-    type: ErrorResponseDto,
-    description: 'Room is already booked for this time',
+  @ApiErrorResponse({
+    status: HttpStatus.CONFLICT,
+    path: BOOKING_PATH,
+    examples: [ROOM_ALREADY_BOOKED],
   })
   update(
     @CurrentUser() user: AuthenticatedUser,
@@ -133,18 +188,29 @@ export class BookingsController {
   @ApiOperation({
     summary: 'Cancel a booking (owner or admin); the record is kept',
   })
-  @ApiOkResponse({ type: BookingResponseDto })
-  @ApiBadRequestResponse({
-    type: ErrorResponseDto,
-    description: 'Booking is already cancelled',
+  @ApiOkResponse({
+    type: BookingResponseDto,
+    description: 'The cancelled booking',
   })
-  @ApiForbiddenResponse({
-    type: ErrorResponseDto,
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: `${BOOKING_PATH}/cancel`,
+    description: 'Booking is already cancelled, or invalid id',
+    examples: [
+      'Booking is already cancelled',
+      'Validation failed (uuid is expected)',
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.FORBIDDEN,
+    path: `${BOOKING_PATH}/cancel`,
     description: 'The booking belongs to another user',
+    examples: [NOT_OWNER],
   })
-  @ApiNotFoundResponse({
-    type: ErrorResponseDto,
-    description: 'Booking not found',
+  @ApiErrorResponse({
+    status: HttpStatus.NOT_FOUND,
+    path: `${BOOKING_PATH}/cancel`,
+    examples: ['Booking not found'],
   })
   cancel(
     @CurrentUser() user: AuthenticatedUser,

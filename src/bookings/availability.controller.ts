@@ -1,23 +1,32 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
+  Controller,
+  Get,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Query,
+} from '@nestjs/common';
+import {
   ApiBearerAuth,
-  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { ErrorResponseDto } from '../common/dto/error-response.dto';
+import { ApiErrorResponse } from '../common/decorators/api-error-response.decorator';
 import { BookingsService } from './bookings.service';
 import { AvailabilityQueryDto } from './dto/availability-query.dto';
 import { AvailabilityResponseDto } from './dto/availability-response.dto';
 
+const AVAILABILITY_PATH =
+  '/rooms/8c1f2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f/availability?date=2026-10-20';
+
 @ApiTags('rooms')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({
-  type: ErrorResponseDto,
+@ApiErrorResponse({
+  status: HttpStatus.UNAUTHORIZED,
+  path: AVAILABILITY_PATH,
   description: 'Missing or invalid access token',
+  examples: ['Missing access token', 'Invalid or expired access token'],
 })
 @Controller('rooms')
 export class AvailabilityController {
@@ -25,11 +34,26 @@ export class AvailabilityController {
 
   @Get(':id/availability')
   @ApiOperation({ summary: 'Free time slots of a room for one day (UTC)' })
-  @ApiOkResponse({ type: AvailabilityResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiNotFoundResponse({
-    type: ErrorResponseDto,
-    description: 'Room not found',
+  @ApiOkResponse({
+    type: AvailabilityResponseDto,
+    description: 'Free time slots of the day',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: AVAILABILITY_PATH,
+    description: 'Invalid date or room id',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['date must be in YYYY-MM-DD format'],
+      },
+      'Validation failed (uuid is expected)',
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.NOT_FOUND,
+    path: AVAILABILITY_PATH,
+    examples: ['Room not found'],
   })
   getAvailability(
     @Param('id', ParseUUIDPipe) roomId: string,
