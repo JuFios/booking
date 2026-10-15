@@ -110,6 +110,7 @@ const BULK_USERS = 200;
 const BULK_BOOKINGS_PER_ROOM = 20;
 const BULK_BOOKINGS_FROM = Date.UTC(2026, 8, 1);
 const BULK_INSERT_CHUNK = 5000;
+const BULK_INSERT_TIMEOUT_MS = 10 * 60 * 1000;
 
 async function seedBulk(prisma: PrismaClient): Promise<void> {
   const equipmentNames = Array.from(
@@ -165,8 +166,13 @@ async function seedBulkBookings(
   prisma: PrismaClient,
   rooms: { id: string }[],
 ): Promise<void> {
+  // Only the bookings of the bulk users count: a real booking that happens to be
+  // titled "Bulk booking ..." must not make the seed think it has already run
   const existing = await prisma.booking.count({
-    where: { title: { startsWith: 'Bulk booking' } },
+    where: {
+      title: { startsWith: 'Bulk booking' },
+      user: { email: { startsWith: 'bulk-user-' } },
+    },
   });
   if (existing > 0) {
     console.log(`Bulk bookings already exist (${existing}), skipped`);
@@ -211,11 +217,18 @@ async function seedBulkBookings(
       };
     }),
   );
-  for (let i = 0; i < bookings.length; i += BULK_INSERT_CHUNK) {
-    await prisma.booking.createMany({
-      data: bookings.slice(i, i + BULK_INSERT_CHUNK),
-    });
-  }
+  // One transaction: an interrupted run leaves no bookings behind, so the next
+  // run starts from scratch instead of skipping a partial data set
+  await prisma.$transaction(
+    async (tx) => {
+      for (let i = 0; i < bookings.length; i += BULK_INSERT_CHUNK) {
+        await tx.booking.createMany({
+          data: bookings.slice(i, i + BULK_INSERT_CHUNK),
+        });
+      }
+    },
+    { timeout: BULK_INSERT_TIMEOUT_MS },
+  );
 
   console.log(
     `Seeded ${users.length} bulk users and ${bookings.length} bulk bookings`,
