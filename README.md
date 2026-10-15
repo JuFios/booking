@@ -49,6 +49,49 @@ SEED_BULK=true npx prisma db seed
 
 The seed runs from your machine only (it needs `ts-node` and the generated Prisma client from `npm install`), not inside the API container. It works in both modes above, because the database port 5432 is published to the host.
 
+## Double booking protection
+
+Two confirmed bookings of one room must not overlap in time, even when the requests arrive at the same moment. A check in the service is not enough: two requests can both run `SELECT` and see a free slot before either of them has inserted its row, and then both insert.
+
+The rule lives in the database (migration `20261014143825_booking_constraints`):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE "Booking"
+  ADD CONSTRAINT "Booking_no_overlap" EXCLUDE USING gist (
+    "roomId" WITH =,
+    tstzrange("startsAt", "endsAt", '[)') WITH &&
+  ) WHERE (status = 'confirmed');
+```
+
+- Postgres rejects a row if a confirmed booking of the same room (`=`) has an overlapping time range (`&&`).
+- `btree_gist` lets one GiST index combine `=` on a uuid with `&&` on a range.
+- `'[)'` includes the start and excludes the end, so 10:00–11:00 and 11:00–12:00 do not overlap.
+- `WHERE (status = 'confirmed')` ignores cancelled bookings, so cancelling frees the slot.
+- CHECK constraints repeat the time rules of the service: `startsAt < endsAt`, a duration from 15 minutes to 8 hours.
+
+How each operation works with the constraint:
+
+| Operation | SQL | Slot is taken |
+|---|---|---|
+| `POST /bookings` | `INSERT … ON CONFLICT DO NOTHING RETURNING id` | no row is returned → 409 |
+| `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
+| `POST /bookings/:id/cancel` | `UPDATE … SET status = 'cancelled' WHERE status = 'confirmed'` | — (of parallel cancels only one changes the row) |
+
+- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks.
+- **Why the advisory lock in `PATCH`.** `UPDATE` has no `ON CONFLICT`, and parallel updates into one slot deadlock the same way. The lock makes time changes within one room run one after another; it is taken only when the time changes and is released at the end of the transaction. The constraint still decides whether the new time is free.
+
+Two solutions were tried, both are in the commit history: a transaction that locks the room row with `SELECT … FOR UPDATE`, and the exclusion constraint. The constraint was kept: `FOR UPDATE` protects only the code paths that remember to take the lock, while the constraint holds for every writer, including future endpoints and scripts.
+
+`test/bookings-race.e2e-spec.ts` sends 20 parallel `POST /bookings` for one slot:
+
+| Version | 201 | 409 | Bookings in the database |
+|---|---|---|---|
+| Naive (`SELECT`, then `INSERT`) | 7–8 | 12–13 | 7–8 |
+| `SELECT … FOR UPDATE` on the room | 1 | 19 | 1 |
+| Exclusion constraint (final) | 1 | 19 | 1 |
+
 ## Performance
 
 Measured on the bulk data set (`SEED_BULK=true`: 5008 rooms, 23 equipment items, 10013 room–equipment links, 201 users, 100 000 bookings).
@@ -238,4 +281,12 @@ Index Scan using "Booking_roomId_startsAt_idx" on "Booking" (actual time=0.027..
   Filter: (("endsAt" > '2026-10-21 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
 Planning Time: 0.299 ms
 Execution Time: 0.043 ms
+```
+
+To reproduce:
+
+```bash
+SEED_BULK=true npx prisma db seed
+docker compose exec db psql -U booking -d booking -c 'VACUUM ANALYZE "Booking";'
+docker compose exec db psql -U booking -d booking -c 'EXPLAIN (ANALYZE, COSTS OFF) SELECT * FROM "Booking" ORDER BY "startsAt", id LIMIT 20'
 ```
