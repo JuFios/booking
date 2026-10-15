@@ -90,4 +90,5 @@ model Booking {
 
   @@index([roomId, startsAt])
   @@index([userId, startsAt])
+  @@index([startsAt, id])
 }

@@ -13,6 +13,7 @@ import {
   canAccessBooking,
   checkBookingTime,
   checkRoomForBooking,
+  earliestStartEndingAfter,
   findFreeSlots,
 } from './booking-rules';
 import { AvailabilityResponseDto } from './dto/availability-response.dto';
@@ -212,7 +213,7 @@ export class BookingsService {
       where: {
         roomId,
         status: BookingStatus.confirmed,
-        startsAt: { lt: dayEnd },
+        startsAt: { gt: earliestStartEndingAfter(from), lt: dayEnd },
         endsAt: { gt: from },
       },
       select: { startsAt: true, endsAt: true },
@@ -261,7 +262,12 @@ export class BookingsService {
       ...(query.status && { status: query.status }),
       // the booking overlaps the period [from, to)
       ...(from && { endsAt: { gt: from } }),
-      ...(to && { startsAt: { lt: to } }),
+      ...((from || to) && {
+        startsAt: {
+          ...(from && { gt: earliestStartEndingAfter(from) }),
+          ...(to && { lt: to }),
+        },
+      }),
     };
   }
 

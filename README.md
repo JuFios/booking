@@ -41,7 +41,7 @@ Creates the admin account from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` and 
 npx prisma db seed
 ```
 
-`SEED_BULK=true` additionally creates 20 equipment items and 5000 rooms. On a small table Postgres always reads the whole table, so this data set is needed to see indexes in `EXPLAIN ANALYZE`:
+`SEED_BULK=true` additionally creates 20 equipment items, 5000 rooms, 200 users and 100 000 bookings (20 per room, September–October 2026, every tenth one cancelled). Bulk users get a random password and cannot log in. On a small table Postgres always reads the whole table, so this data set is needed to see indexes in `EXPLAIN ANALYZE`:
 
 ```bash
 SEED_BULK=true npx prisma db seed
@@ -51,7 +51,7 @@ The seed runs from your machine only (it needs `ts-node` and the generated Prism
 
 ## Performance
 
-Measured on the bulk data set (`SEED_BULK=true`: 5008 rooms, 23 equipment items, 10013 room–equipment links).
+Measured on the bulk data set (`SEED_BULK=true`: 5008 rooms, 23 equipment items, 10013 room–equipment links, 201 users, 100 000 bookings).
 
 ### No N+1 in `GET /rooms`
 
@@ -129,4 +129,113 @@ To reproduce:
 SEED_BULK=true npx prisma db seed
 docker compose exec db psql -U booking -d booking -c 'ANALYZE "Room"; ANALYZE "RoomEquipment";'
 docker compose exec db psql -U booking -d booking -c 'EXPLAIN (ANALYZE, COSTS OFF) SELECT count(*) FROM "Room" WHERE floor = 3'
+```
+
+### No N+1 in `GET /bookings`
+
+Every booking in the list comes with its room and user. The number of SQL queries does not depend on the page size or the role (counted with `log_statement = 'all'`):
+
+| Who | Request | Bookings on the page | SQL queries |
+|---|---|---|---|
+| admin | `GET /bookings?limit=5` | 5 | 4 |
+| admin | `GET /bookings?limit=20` | 20 | 4 |
+| admin | `GET /bookings?limit=100` | 100 | 4 |
+| admin | `GET /bookings?limit=100&status=confirmed&from=…&to=…` | 100 | 4 |
+| admin | `GET /bookings?roomId=…&limit=100` | 20 | 4 |
+| member | `GET /bookings?limit=5` | 5 | 4 |
+| member | `GET /bookings?limit=100` | 100 | 4 |
+| member | `GET /bookings?limit=100&from=…&to=…` | 100 | 4 |
+| any | `GET /rooms/:id/availability?date=…` | — | 2 |
+
+The 4 queries: bookings of the page, their rooms (one `WHERE id IN (...)`), their users (one `WHERE id IN (...)`) and `COUNT(*)` for `total`. Availability reads the room and then all confirmed bookings of that day in one query.
+
+### Indexes used by the booking filters
+
+| Index | Used by |
+|---|---|
+| `Booking_userId_startsAt_idx` (`userId`, `startsAt`) | a member's list: own bookings, sorted by time, with a period |
+| `Booking_roomId_startsAt_idx` (`roomId`, `startsAt`) | `roomId` filter, availability of a room |
+| `Booking_startsAt_id_idx` (`startsAt`, `id`) | an admin's list without `roomId`: sorting and the period filter |
+| `Booking_no_overlap` (GiST, `roomId` + time range) | the exclusion constraint against double booking |
+
+A booking overlaps the period `[from, to)` when `endsAt > from` and `startsAt < to`. `endsAt > from` alone cannot use an index on `startsAt`, so the service also adds `startsAt > from − 8 hours`: a booking lasts at most 8 hours, so one that ends after `from` started later than `from − 8 hours`. The `Booking_duration_max_8h` CHECK constraint guarantees this in the database. With both bounds the index reads only the requested period.
+
+`status` has no index of its own: it has two values, and it is checked on the rows already found by the other conditions.
+
+Plans from `EXPLAIN (ANALYZE, COSTS OFF)` after `VACUUM ANALYZE "Booking";`.
+
+A member's page (`userId = …`, `ORDER BY "startsAt", id LIMIT 20`):
+
+```
+Limit (actual time=0.318..0.322 rows=20 loops=1)
+  ->  Incremental Sort (actual time=0.317..0.318 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Presorted Key: "startsAt"
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+        ->  Index Scan using "Booking_userId_startsAt_idx" on "Booking" (actual time=0.036..0.234 rows=26 loops=1)
+              Index Cond: ("userId" = 'e1c4c627-316b-4175-923a-44b5108ccac5'::uuid)
+Planning Time: 0.738 ms
+Execution Time: 0.378 ms
+```
+
+A member's page for October (`from=2026-10-01`, `to=2026-10-31`):
+
+```
+Limit (actual time=0.180..0.182 rows=20 loops=1)
+  ->  Incremental Sort (actual time=0.179..0.180 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Presorted Key: "startsAt"
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+        ->  Index Scan using "Booking_userId_startsAt_idx" on "Booking" (actual time=0.022..0.147 rows=26 loops=1)
+              Index Cond: (("userId" = 'e1c4c627-316b-4175-923a-44b5108ccac5'::uuid) AND ("startsAt" > '2026-09-30 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-31 00:00:00+00'::timestamp with time zone))
+              Filter: ("endsAt" > '2026-10-01 00:00:00+00'::timestamp with time zone)
+Planning Time: 0.405 ms
+Execution Time: 0.204 ms
+```
+
+`roomId = …`:
+
+```
+Limit (actual time=0.055..0.058 rows=20 loops=1)
+  ->  Sort (actual time=0.055..0.056 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Sort Method: quicksort  Memory: 27kB
+        ->  Bitmap Heap Scan on "Booking" (actual time=0.036..0.037 rows=20 loops=1)
+              Recheck Cond: ("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid)
+              Heap Blocks: exact=1
+              ->  Bitmap Index Scan on "Booking_roomId_startsAt_idx" (actual time=0.026..0.026 rows=20 loops=1)
+                    Index Cond: ("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid)
+Planning Time: 0.334 ms
+Execution Time: 0.079 ms
+```
+
+An admin's page without filters reads the first 20 rows of `Booking_startsAt_id_idx` (before this index: a sequential scan of all 100 000 rows and a sort, 10 ms):
+
+```
+Limit (actual time=0.010..0.090 rows=20 loops=1)
+  ->  Index Scan using "Booking_startsAt_id_idx" on "Booking" (actual time=0.010..0.088 rows=20 loops=1)
+Planning Time: 0.306 ms
+Execution Time: 0.107 ms
+```
+
+An admin's page for October with `status=confirmed` (before: a sequential scan, 7.7 ms):
+
+```
+Limit (actual time=0.981..0.993 rows=20 loops=1)
+  ->  Index Scan using "Booking_startsAt_id_idx" on "Booking" (actual time=0.980..0.991 rows=20 loops=1)
+        Index Cond: (("startsAt" > '2026-09-30 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-31 00:00:00+00'::timestamp with time zone))
+        Filter: (("endsAt" > '2026-10-01 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
+        Rows Removed by Filter: 333
+Planning Time: 0.369 ms
+Execution Time: 1.006 ms
+```
+
+Availability of a room for 2026-10-21:
+
+```
+Index Scan using "Booking_roomId_startsAt_idx" on "Booking" (actual time=0.027..0.027 rows=1 loops=1)
+  Index Cond: (("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid) AND ("startsAt" > '2026-10-20 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-22 00:00:00+00'::timestamp with time zone))
+  Filter: (("endsAt" > '2026-10-21 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
+Planning Time: 0.299 ms
+Execution Time: 0.043 ms
 ```

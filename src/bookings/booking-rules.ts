@@ -52,6 +52,10 @@ export function canAccessBooking(
   return user.role === Role.admin || user.id === ownerId;
 }
 
+export function earliestStartEndingAfter(moment: Date): Date {
+  return new Date(moment.getTime() - MAX_BOOKING_DURATION_MS);
+}
+
 export function findFreeSlots(
   busy: { startsAt: Date; endsAt: Date }[],
   from: Date,
