@@ -23,7 +23,7 @@ import { CreateRoomDto } from './dto/create-room.dto';
 import { ListRoomsQueryDto } from './dto/list-rooms-query.dto';
 import { RoomPageDto, RoomResponseDto } from './dto/room-response.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
-import { RoomsService } from './rooms.service';
+import { NOTHING_TO_UPDATE, RoomsService } from './rooms.service';
 
 const ROOM_PATH = '/rooms/8c1f2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f';
 
@@ -132,6 +132,7 @@ export class RoomsController {
         message: 'Validation failed',
         details: ['capacity must not be less than 1'],
       },
+      NOTHING_TO_UPDATE,
       'Validation failed (uuid is expected)',
       'Unknown equipment ids: 3f1c7e2a-8b4d-4c2e-9f6a-1d2e3f4a5b6c',
     ],

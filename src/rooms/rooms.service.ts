@@ -27,6 +27,10 @@ const roomSelect = {
 
 type RoomRow = Prisma.RoomGetPayload<{ select: typeof roomSelect }>;
 
+// Also used in the Swagger examples of RoomsController
+export const NOTHING_TO_UPDATE =
+  'At least one of name, capacity, floor, isActive, equipmentIds is required';
+
 @Injectable()
 export class RoomsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -80,6 +84,11 @@ export class RoomsService {
   }
 
   async update(id: string, dto: UpdateRoomDto): Promise<RoomResponseDto> {
+    // Omitted fields are undefined on the DTO instance
+    if (Object.values(dto).every((value) => value === undefined)) {
+      throw new BadRequestException(NOTHING_TO_UPDATE);
+    }
+
     const { equipmentIds, ...fields } = dto;
 
     if (equipmentIds) {
