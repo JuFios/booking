@@ -36,11 +36,11 @@ export const NOT_OWNER = 'You can access only your own bookings';
 export const NOTHING_TO_UPDATE =
   'At least one of title, startsAt, endsAt is required';
 
+const CANCELLED_BOOKING_CHANGE = 'Cancelled booking cannot be changed';
+
 // Prisma's defaults (maxWait 2 s, timeout 5 s) are too short when many bookings
 // of one room wait for each other's locks. If even these run out, the global
 // filter turns P2028 into 503 instead of 500.
-const CANCELLED_BOOKING_CHANGE = 'Cancelled booking cannot be changed';
-
 const BOOKING_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 10_000 };
 
 const bookingSelect = {
@@ -73,6 +73,7 @@ export class BookingsService {
     }
 
     const bookingId = await this.prisma.$transaction(async (tx) => {
+      await this.limitLockWait(tx);
       await this.checkRoomUnderLock(tx, dto.roomId, dto.attendeesCount);
 
       // satisfies checks the object against Prisma's create type: a new required
@@ -145,6 +146,7 @@ export class BookingsService {
           return this.updateConfirmed(tx, id, { title: dto.title });
         }
 
+        await this.limitLockWait(tx);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
         // The booking may have changed while this request waited for the lock:
         // the rules are checked, and the missing field is filled, from its
@@ -305,6 +307,15 @@ export class BookingsService {
     }
 
     return booking;
+  }
+
+  // Prisma's transaction timeout does not interrupt a query that waits for a
+  // lock, so a stuck lock holder would block this request (and its pooled
+  // connection) for as long as it likes. After 5 s Postgres cancels the wait
+  // with 55P03, which the global filter turns into 503. Shorter than the
+  // 10 s transaction timeout, so that this error comes first.
+  private async limitLockWait(tx: Prisma.TransactionClient): Promise<void> {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
   }
 
   private async checkRoomUnderLock(

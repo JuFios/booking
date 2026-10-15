@@ -13,6 +13,8 @@ import { ErrorResponseDto } from '../dto/error-response.dto';
 import {
   isExclusionViolation,
   isForeignKeyViolation,
+  isLockTimeout,
+  isWriteConflict,
 } from '../utils/database-errors';
 
 interface ResolvedError {
@@ -36,6 +38,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       this.logger.error(
         `${request.method} ${request.url}`,
         exception instanceof Error ? exception.stack : String(exception),
+      );
+    } else if (isWriteConflict(exception)) {
+      // answered with 409, but a deadlock is not expected: keep it visible
+      this.logger.warn(
+        `${request.method} ${request.url}: deadlock or write conflict`,
       );
     }
 
@@ -87,6 +94,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       { model?: string; modelName?: string } | undefined;
     const model = meta?.model ?? meta?.modelName ?? 'Record';
 
+    if (isWriteConflict(exception)) {
+      return {
+        statusCode: HttpStatus.CONFLICT,
+        message: 'Concurrent update conflict, try again',
+      };
+    }
+
     switch (exception.code) {
       case 'P2002': // unique constraint violation
         return {
@@ -98,40 +112,44 @@ export class AllExceptionsFilter implements ExceptionFilter {
           statusCode: HttpStatus.NOT_FOUND,
           message: `${model} not found`,
         };
-      case 'P2034': // deadlock or write conflict: the client can retry
-        return {
-          statusCode: HttpStatus.CONFLICT,
-          message: 'Concurrent update conflict, try again',
-        };
       case 'P2028': // interactive transaction could not start or ran out of time
-        return {
-          statusCode: HttpStatus.SERVICE_UNAVAILABLE,
-          message: 'Database is busy, try again',
-        };
+        return this.databaseBusy();
       default:
-        return this.resolveDatabaseConstraint(exception, model);
+        return this.resolveRawQueryError(exception);
     }
   }
 
-  // Constraint violations of raw queries arrive without a specific Prisma code
-  private resolveDatabaseConstraint(
+  // Raw queries report database errors as P2010 (or without a specific code):
+  // the Postgres error is in meta.driverAdapterError.cause
+  private resolveRawQueryError(
     exception: Prisma.PrismaClientKnownRequestError,
-    model: string,
   ): ResolvedError | undefined {
+    if (isLockTimeout(exception)) {
+      return this.databaseBusy();
+    }
     if (isExclusionViolation(exception)) {
       return {
         statusCode: HttpStatus.CONFLICT,
-        message: `${model} conflicts with an existing record`,
+        message: 'The operation conflicts with an existing record',
       };
     }
+    // Also raised when a row that is still referenced is deleted, so the
+    // message does not say which side is missing
     if (isForeignKeyViolation(exception)) {
       return {
         statusCode: HttpStatus.CONFLICT,
-        message: `${model} refers to a record that does not exist`,
+        message: 'The operation conflicts with related records',
       };
     }
 
     return undefined;
+  }
+
+  private databaseBusy(): ResolvedError {
+    return {
+      statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+      message: 'Database is busy, try again',
+    };
   }
 
   // Errors from Express middleware (e.g. body-parser's 413) are not
