@@ -67,10 +67,14 @@ describe('Booking race (e2e)', () => {
   });
 
   afterAll(async () => {
-    await prisma.booking.deleteMany({ where: { roomId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.user.delete({ where: { email } });
-    await app.close();
+    // beforeAll may fail before the room exists, and an undefined roomId makes
+    // deleteMany match every booking in the database
+    if (roomId) {
+      await prisma.booking.deleteMany({ where: { roomId } });
+      await prisma.room.delete({ where: { id: roomId } });
+    }
+    await prisma.user.deleteMany({ where: { email } });
+    await app?.close();
   });
 
   it(`gives exactly one booking for ${PARALLEL_REQUESTS} parallel requests on one slot`, async () => {

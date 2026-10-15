@@ -98,6 +98,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
           statusCode: HttpStatus.NOT_FOUND,
           message: `${model} not found`,
         };
+      case 'P2034': // deadlock or write conflict: the client can retry
+        return {
+          statusCode: HttpStatus.CONFLICT,
+          message: 'Concurrent update conflict, try again',
+        };
       case 'P2028': // interactive transaction could not start or ran out of time
         return {
           statusCode: HttpStatus.SERVICE_UNAVAILABLE,

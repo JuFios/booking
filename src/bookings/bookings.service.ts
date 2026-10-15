@@ -10,6 +10,7 @@ import {
   getForeignKeyViolation,
   isExclusionViolation,
 } from '../common/utils/database-errors';
+import { isEmptyUpdate } from '../common/utils/dto';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
 import { BookingStatus, Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -124,7 +125,7 @@ export class BookingsService {
     dto: UpdateBookingDto,
   ): Promise<BookingResponseDto> {
     const timeChanged = dto.startsAt !== undefined || dto.endsAt !== undefined;
-    if (dto.title === undefined && !timeChanged) {
+    if (isEmptyUpdate(dto)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
 

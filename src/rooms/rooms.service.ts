@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { isEmptyUpdate } from '../common/utils/dto';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
 import { BookingStatus, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -85,8 +86,7 @@ export class RoomsService {
   }
 
   async update(id: string, dto: UpdateRoomDto): Promise<RoomResponseDto> {
-    // Omitted fields are undefined on the DTO instance
-    if (Object.values(dto).every((value) => value === undefined)) {
+    if (isEmptyUpdate(dto)) {
       throw new BadRequestException(NOTHING_TO_UPDATE);
     }
 
