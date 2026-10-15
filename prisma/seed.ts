@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as argon2 from 'argon2';
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '../src/generated/prisma/client';
 
 const EQUIPMENT = ['Projector', 'Whiteboard', 'Video conferencing'] as const;
@@ -104,6 +105,12 @@ async function seedRooms(prisma: PrismaClient): Promise<void> {
 const BULK_ROOMS = 5000;
 const BULK_EQUIPMENT = 20;
 const BULK_EQUIPMENT_PER_ROOM = 2;
+const BULK_USERS = 200;
+const BULK_BOOKINGS_PER_ROOM = 20;
+const BULK_BOOKINGS_FROM = Date.UTC(2026, 8, 1);
+const BULK_INSERT_CHUNK = 5000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 async function seedBulk(prisma: PrismaClient): Promise<void> {
   const equipmentNames = Array.from(
@@ -150,6 +157,69 @@ async function seedBulk(prisma: PrismaClient): Promise<void> {
 
   console.log(
     `Seeded ${BULK_EQUIPMENT} bulk equipment items and ${BULK_ROOMS} bulk rooms`,
+  );
+
+  await seedBulkBookings(prisma, rooms);
+}
+
+async function seedBulkBookings(
+  prisma: PrismaClient,
+  rooms: { id: string }[],
+): Promise<void> {
+  const existing = await prisma.booking.count({
+    where: { title: { startsWith: 'Bulk booking' } },
+  });
+  if (existing > 0) {
+    console.log(`Bulk bookings already exist (${existing}), skipped`);
+    return;
+  }
+
+  const passwordHash = await argon2.hash(randomUUID());
+  const emails = Array.from(
+    { length: BULK_USERS },
+    (_, i) => `bulk-user-${String(i + 1).padStart(3, '0')}@seed.local`,
+  );
+  await prisma.user.createMany({
+    data: emails.map((email, i) => ({
+      email,
+      name: `Bulk user ${i + 1}`,
+      passwordHash,
+    })),
+    skipDuplicates: true,
+  });
+  const users = await prisma.user.findMany({
+    where: { email: { in: emails } },
+    orderBy: { email: 'asc' },
+    select: { id: true },
+  });
+
+  const bookings = rooms.flatMap((room, i) =>
+    Array.from({ length: BULK_BOOKINGS_PER_ROOM }, (_, k) => {
+      const day = k * 3 + (i % 3);
+      const hour = 8 + ((i + k) % 10);
+      const startsAt = new Date(
+        BULK_BOOKINGS_FROM + day * DAY_MS + hour * HOUR_MS,
+      );
+      return {
+        title: `Bulk booking ${k + 1}`,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        status:
+          (i + k) % 10 === 0 ? ('cancelled' as const) : ('confirmed' as const),
+        attendeesCount: 2,
+        roomId: room.id,
+        userId: users[(i + k * 7) % users.length].id,
+      };
+    }),
+  );
+  for (let i = 0; i < bookings.length; i += BULK_INSERT_CHUNK) {
+    await prisma.booking.createMany({
+      data: bookings.slice(i, i + BULK_INSERT_CHUNK),
+    });
+  }
+
+  console.log(
+    `Seeded ${users.length} bulk users and ${bookings.length} bulk bookings`,
   );
 }
 
