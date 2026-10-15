@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
@@ -291,7 +292,16 @@ export class BookingsService {
         (gen_random_uuid(), ${data.title}, ${data.startsAt}, ${data.endsAt},
          ${data.attendeesCount}, ${data.roomId}::uuid, ${data.userId}::uuid, now())
       ON CONFLICT DO NOTHING
-      RETURNING id`;
+      RETURNING id`.catch((error: unknown) => {
+      const constraint = getForeignKeyViolation(error);
+      if (constraint === 'Booking_userId_fkey') {
+        throw new UnauthorizedException('User not found');
+      }
+      if (constraint === 'Booking_roomId_fkey') {
+        throw new NotFoundException('Room not found');
+      }
+      throw error;
+    });
 
     if (inserted.length === 0) {
       throw new ConflictException(ROOM_ALREADY_BOOKED);
@@ -304,12 +314,26 @@ export class BookingsService {
   }
 }
 
-function isOverlapError(error: unknown): boolean {
+interface DatabaseErrorCause {
+  originalCode?: string;
+  constraint?: { index?: string };
+}
+
+function getDatabaseErrorCause(error: unknown): DatabaseErrorCause | undefined {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
-    return false;
+    return undefined;
   }
 
   const meta = error.meta as
-    { driverAdapterError?: { cause?: { originalCode?: string } } } | undefined;
-  return meta?.driverAdapterError?.cause?.originalCode === '23P01';
+    { driverAdapterError?: { cause?: DatabaseErrorCause } } | undefined;
+  return meta?.driverAdapterError?.cause;
+}
+
+function isOverlapError(error: unknown): boolean {
+  return getDatabaseErrorCause(error)?.originalCode === '23P01';
+}
+
+function getForeignKeyViolation(error: unknown): string | undefined {
+  const cause = getDatabaseErrorCause(error);
+  return cause?.originalCode === '23503' ? cause.constraint?.index : undefined;
 }
