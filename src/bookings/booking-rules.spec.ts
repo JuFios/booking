@@ -1,4 +1,5 @@
 import {
+  availabilityWindow,
   checkBookingTime,
   hasEnded,
   MAX_BOOKING_ADVANCE_MS,
@@ -93,5 +94,35 @@ describe('hasEnded: an ended booking cannot be changed or cancelled', () => {
 
   it('is true for a booking in the past', () => {
     expect(hasEnded({ endsAt: at('09:00') }, now)).toBe(true);
+  });
+});
+
+describe('availabilityWindow: the part of a day that can still be booked', () => {
+  it('is the whole day for a future date', () => {
+    expect(availabilityWindow('2026-10-25', now)).toEqual({
+      from: new Date('2026-10-25T00:00:00Z'),
+      to: new Date('2026-10-26T00:00:00Z'),
+    });
+  });
+
+  it('starts at the next whole minute today', () => {
+    expect(
+      availabilityWindow('2026-10-20', new Date('2026-10-20T10:30:20Z')),
+    ).toEqual({ from: at('10:31'), to: new Date('2026-10-21T00:00:00Z') });
+  });
+
+  it('is empty for a past date', () => {
+    expect(availabilityWindow('2026-10-19', now)).toBeUndefined();
+  });
+
+  it('is empty for a date more than 365 days ahead', () => {
+    expect(availabilityWindow('2027-10-21', now)).toBeUndefined();
+  });
+
+  it('ends at the last allowed start on the 365th day', () => {
+    expect(availabilityWindow('2027-10-20', now)).toEqual({
+      from: new Date('2027-10-20T00:00:00Z'),
+      to: later(now, MAX_BOOKING_ADVANCE_MS),
+    });
   });
 });

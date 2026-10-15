@@ -88,8 +88,10 @@ export function availabilityWindow(
   const dayEnd = new Date(dayStart.getTime() + DAY_MS);
   const nextMinute = new Date(Math.ceil(now.getTime() / MINUTE_MS) * MINUTE_MS);
   const from = nextMinute > dayStart ? nextMinute : dayStart;
+  const lastStart = new Date(now.getTime() + MAX_BOOKING_ADVANCE_MS);
+  const to = lastStart < dayEnd ? lastStart : dayEnd;
 
-  return from < dayEnd ? { from, to: dayEnd } : undefined;
+  return from < to ? { from, to } : undefined;
 }
 
 export function findFreeSlots(

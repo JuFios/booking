@@ -18,7 +18,7 @@ export class AvailabilityResponseDto {
   @ApiProperty({
     type: [TimeSlotDto],
     description:
-      'Free time ranges of at least 15 minutes. Empty if the room is inactive or the day is over',
+      'Free time ranges of at least 15 minutes. Empty if the room is inactive, the day is over or the date is more than 365 days ahead',
   })
   slots!: TimeSlotDto[];
 }
