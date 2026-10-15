@@ -17,6 +17,11 @@ import {
   isWriteConflict,
 } from '../utils/database-errors';
 
+// Also used in the Swagger examples
+export const CONCURRENT_UPDATE_CONFLICT =
+  'Concurrent update conflict, try again';
+export const DATABASE_BUSY = 'Database is busy, try again';
+
 interface ResolvedError {
   statusCode: number;
   message: string;
@@ -97,7 +102,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (isWriteConflict(exception)) {
       return {
         statusCode: HttpStatus.CONFLICT,
-        message: 'Concurrent update conflict, try again',
+        message: CONCURRENT_UPDATE_CONFLICT,
       };
     }
 
@@ -148,7 +153,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private databaseBusy(): ResolvedError {
     return {
       statusCode: HttpStatus.SERVICE_UNAVAILABLE,
-      message: 'Database is busy, try again',
+      message: DATABASE_BUSY,
     };
   }
 

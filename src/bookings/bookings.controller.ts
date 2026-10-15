@@ -23,6 +23,10 @@ import {
   CurrentUser,
 } from '../common/decorators/current-user.decorator';
 import {
+  CONCURRENT_UPDATE_CONFLICT,
+  DATABASE_BUSY,
+} from '../common/filters/all-exceptions.filter';
+import {
   BookingsService,
   NOT_OWNER,
   NOTHING_TO_UPDATE,
@@ -79,7 +83,13 @@ export class BookingsController {
   @ApiErrorResponse({
     status: HttpStatus.CONFLICT,
     path: '/bookings',
-    examples: [ROOM_ALREADY_BOOKED],
+    examples: [ROOM_ALREADY_BOOKED, CONCURRENT_UPDATE_CONFLICT],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    path: '/bookings',
+    description: 'The room is locked by other requests for too long, try again',
+    examples: [DATABASE_BUSY],
   })
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -180,7 +190,13 @@ export class BookingsController {
   @ApiErrorResponse({
     status: HttpStatus.CONFLICT,
     path: BOOKING_PATH,
-    examples: [ROOM_ALREADY_BOOKED],
+    examples: [ROOM_ALREADY_BOOKED, CONCURRENT_UPDATE_CONFLICT],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    path: BOOKING_PATH,
+    description: 'The room is locked by other requests for too long, try again',
+    examples: [DATABASE_BUSY],
   })
   update(
     @CurrentUser() user: AuthenticatedUser,

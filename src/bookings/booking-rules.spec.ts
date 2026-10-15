@@ -1,4 +1,4 @@
-import { HOUR_MS } from '../common/utils/time';
+import { HOUR_MS, MINUTE_MS } from '../common/utils/time';
 import {
   availabilityWindow,
   checkBookingTime,
@@ -31,7 +31,7 @@ describe('checkBookingTime: start and end relative to now', () => {
     });
 
     it('rejects a start more than 365 days ahead', () => {
-      const startsAt = later(now, MAX_BOOKING_ADVANCE_MS + 60 * 1000);
+      const startsAt = later(now, MAX_BOOKING_ADVANCE_MS + MINUTE_MS);
       expect(checkBookingTime(startsAt, later(startsAt, HOUR_MS), now)).toBe(
         'startsAt must be at most 365 days ahead',
       );

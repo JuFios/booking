@@ -1,11 +1,11 @@
-import { DAY_MS, MINUTE_MS } from '../common/utils/time';
+import { DAY_MS, HOUR_MS, MINUTE_MS } from '../common/utils/time';
 import { Role } from '../generated/prisma/client';
 
 // Pure functions without database access: easy to unit test.
 // The check* functions return an error message, or undefined when the rule holds.
 
-export const MIN_BOOKING_DURATION_MS = 15 * 60 * 1000;
-export const MAX_BOOKING_DURATION_MS = 8 * 60 * 60 * 1000;
+export const MIN_BOOKING_DURATION_MS = 15 * MINUTE_MS;
+export const MAX_BOOKING_DURATION_MS = 8 * HOUR_MS;
 export const MAX_BOOKING_ADVANCE_MS = 365 * DAY_MS;
 
 // The latest start a booking made at `now` may have (inclusive)

@@ -98,6 +98,10 @@ export class RoomsController {
         message: 'Validation failed',
         details: ['capacity must not be less than 1'],
       },
+      {
+        message: 'Validation failed',
+        details: ['equipmentIds must be an array'],
+      },
       'Unknown equipment ids: 3f1c7e2a-8b4d-4c2e-9f6a-1d2e3f4a5b6c',
     ],
   })

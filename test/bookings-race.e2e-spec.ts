@@ -67,13 +67,15 @@ describe('Booking race (e2e)', () => {
   });
 
   afterAll(async () => {
-    // beforeAll may fail before the room exists, and an undefined roomId makes
-    // deleteMany match every booking in the database
-    if (roomId) {
-      await prisma.booking.deleteMany({ where: { roomId } });
-      await prisma.room.delete({ where: { id: roomId } });
+    // beforeAll may fail before the app or the room exists. An undefined roomId
+    // would make deleteMany match every booking in the database
+    if (prisma) {
+      if (roomId) {
+        await prisma.booking.deleteMany({ where: { roomId } });
+        await prisma.room.delete({ where: { id: roomId } });
+      }
+      await prisma.user.deleteMany({ where: { email } });
     }
-    await prisma.user.deleteMany({ where: { email } });
     await app?.close();
   });
 

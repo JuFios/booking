@@ -69,7 +69,7 @@ ALTER TABLE "Booking"
 - `btree_gist` lets one GiST index combine `=` on a uuid with `&&` on a range.
 - `'[)'` includes the start and excludes the end, so 10:00–11:00 and 11:00–12:00 do not overlap.
 - `WHERE (status = 'confirmed')` ignores cancelled bookings, so cancelling frees the slot.
-- CHECK constraints repeat the time rules of the service: `startsAt < endsAt`, a duration from 15 minutes to 8 hours.
+- CHECK constraints repeat the time rules of the service: a duration from 15 minutes to 8 hours (`startsAt < endsAt` follows from the 15-minute minimum).
 
 How each operation works with the constraint:
 
@@ -79,12 +79,13 @@ How each operation works with the constraint:
 | `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, `SELECT … FROM "Room" … FOR SHARE`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
 | `POST /bookings/:id/cancel` | `UPDATE … SET status = 'cancelled' WHERE status = 'confirmed'` | — (of parallel cancels only one changes the row) |
 
-- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test, each a 500). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
+- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
 - **Why the advisory lock in `PATCH`.** `UPDATE` has no `ON CONFLICT`, and parallel updates into one slot deadlock the same way. The lock makes time changes within one room run one after another; it is taken only when the time changes and is released at the end of the transaction. The constraint still decides whether the new time is free. After taking the lock, `PATCH` reads the booking again and checks the rules against that fresh row, so two parallel changes of one booking do not overwrite each other's field with stale values.
-  - Measured with a one-off script, without the lock: 20 connections send `UPDATE` into one slot at the same moment, 10 rounds. 38 of 200 updates were aborted as a deadlock (`40P01`), each would be a 500.
+  - Measured with a one-off script, without the lock: 20 connections send `UPDATE` into one slot at the same moment, 10 rounds. 38 of 200 updates were aborted as a deadlock (`40P01`); the API would answer them with 409 "try again" and a warning in the log instead of letting them wait their turn.
   - Through the API the requests reach the database less simultaneously, so the `PATCH` race test passes even without the lock. It checks the outcome (one 200, the rest 409) and that `23P01` turns into 409, not the deadlock itself.
   - `hashtext(roomId)` turns the uuid into the integer key that `pg_advisory_xact_lock` needs. Two rooms with the same hash only wait for each other, which is harmless.
-  - The lock is not a second protection against double booking: without it the result stays correct, only some requests would fail with 500.
+  - The lock is not a second protection against double booking: without it the result stays correct, only some requests would fail with 409 "try again".
+  - A request that waits for the room lock longer than 5 s (`SET LOCAL lock_timeout`) gets 503 "Database is busy, try again", so a stuck lock holder cannot block requests and their database connections forever. A deadlock (`40P01`, `P2034`) is a 409 "Concurrent update conflict, try again".
 
 Two solutions were tried, both are in the commit history: a transaction that locks the room row with `SELECT … FOR UPDATE`, and the exclusion constraint. The constraint was kept: `FOR UPDATE` protects only the code paths that remember to take the lock, while the constraint holds for every writer, including future endpoints and scripts.
 
@@ -292,11 +293,11 @@ Execution Time: 1.006 ms
 Availability of a room for 2026-10-21:
 
 ```
-Index Scan using "Booking_roomId_startsAt_idx" on "Booking" (actual time=0.027..0.027 rows=1 loops=1)
-  Index Cond: (("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid) AND ("startsAt" > '2026-10-20 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-22 00:00:00+00'::timestamp with time zone))
+Index Scan using "Booking_roomId_startsAt_idx" on "Booking" (actual time=0.059..0.059 rows=1 loops=1)
+  Index Cond: (("roomId" = '9351734f-f883-4f1c-b7bb-cec095f1feb7'::uuid) AND ("startsAt" > '2026-10-20 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-22 00:15:00+00'::timestamp with time zone))
   Filter: (("endsAt" > '2026-10-21 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
-Planning Time: 0.299 ms
-Execution Time: 0.043 ms
+Planning Time: 0.785 ms
+Execution Time: 0.103 ms
 ```
 
 To reproduce:
