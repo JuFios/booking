@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { BookingStatus } from '../../generated/prisma/client';
-import { UTC_SUFFIX } from './create-booking.dto';
+import { UTC_DATE_TIME } from './create-booking.dto';
 
 export class ListBookingsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
@@ -22,7 +22,9 @@ export class ListBookingsQueryDto extends PaginationQueryDto {
   })
   @IsOptional()
   @IsISO8601({ strict: true })
-  @Matches(UTC_SUFFIX, { message: 'from must be in UTC (end with Z)' })
+  @Matches(UTC_DATE_TIME, {
+    message: 'from must be in UTC, e.g. 2026-10-20T10:00:00Z',
+  })
   from?: string;
 
   @ApiPropertyOptional({
@@ -31,7 +33,9 @@ export class ListBookingsQueryDto extends PaginationQueryDto {
   })
   @IsOptional()
   @IsISO8601({ strict: true })
-  @Matches(UTC_SUFFIX, { message: 'to must be in UTC (end with Z)' })
+  @Matches(UTC_DATE_TIME, {
+    message: 'to must be in UTC, e.g. 2026-10-20T10:00:00Z',
+  })
   to?: string;
 
   @ApiPropertyOptional({ enum: BookingStatus })

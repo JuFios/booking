@@ -14,7 +14,8 @@ import {
 } from 'class-validator';
 
 // All times are passed in UTC: an explicit Z avoids guessing the client's time zone
-export const UTC_SUFFIX = /Z$/;
+export const UTC_DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/;
 
 export class CreateBookingDto {
   @ApiProperty({ example: '8c1f2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f' })
@@ -36,7 +37,9 @@ export class CreateBookingDto {
     description: 'ISO 8601 in UTC',
   })
   @IsISO8601({ strict: true })
-  @Matches(UTC_SUFFIX, { message: 'startsAt must be in UTC (end with Z)' })
+  @Matches(UTC_DATE_TIME, {
+    message: 'startsAt must be in UTC, e.g. 2026-10-20T10:00:00Z',
+  })
   startsAt!: string;
 
   @ApiProperty({
@@ -44,7 +47,9 @@ export class CreateBookingDto {
     description: 'ISO 8601 in UTC',
   })
   @IsISO8601({ strict: true })
-  @Matches(UTC_SUFFIX, { message: 'endsAt must be in UTC (end with Z)' })
+  @Matches(UTC_DATE_TIME, {
+    message: 'endsAt must be in UTC, e.g. 2026-10-20T10:00:00Z',
+  })
   endsAt!: string;
 
   @ApiProperty({ example: 6, minimum: 1, maximum: 1000 })
