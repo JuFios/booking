@@ -110,6 +110,7 @@ export class RoomsService {
         capacity: { gte: query.minCapacity },
       }),
       ...(query.floor !== undefined && { floor: query.floor }),
+      ...(query.isActive !== undefined && { isActive: query.isActive }),
       // the room must have every requested equipment item
       ...(query.equipment?.length && {
         AND: query.equipment.map((equipmentId) => ({
