@@ -16,6 +16,7 @@ import {
   checkRoomForBooking,
   earliestStartEndingAfter,
   findFreeSlots,
+  hasEnded,
 } from './booking-rules';
 import { AvailabilityResponseDto } from './dto/availability-response.dto';
 import { BookingResponseDto } from './dto/booking-response.dto';
@@ -115,6 +116,10 @@ export class BookingsService {
     dto: UpdateBookingDto,
   ): Promise<BookingResponseDto> {
     const booking = await this.findAccessibleBooking(user, id);
+    const now = new Date();
+    if (hasEnded(booking, now)) {
+      throw new BadRequestException('Ended booking cannot be changed');
+    }
 
     const timeChanged = dto.startsAt !== undefined || dto.endsAt !== undefined;
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : booking.startsAt;
@@ -124,7 +129,7 @@ export class BookingsService {
       const timeError = checkBookingTime(
         startsAt,
         endsAt,
-        new Date(),
+        now,
         booking.startsAt,
       );
       if (timeError) {
@@ -168,7 +173,10 @@ export class BookingsService {
     user: AuthenticatedUser,
     id: string,
   ): Promise<BookingResponseDto> {
-    await this.findAccessibleBooking(user, id);
+    const booking = await this.findAccessibleBooking(user, id);
+    if (hasEnded(booking, new Date())) {
+      throw new BadRequestException('Ended booking cannot be cancelled');
+    }
 
     const { count } = await this.prisma.booking.updateMany({
       where: { id, status: BookingStatus.confirmed },

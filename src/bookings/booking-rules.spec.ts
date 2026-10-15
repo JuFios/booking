@@ -1,4 +1,4 @@
-import { checkBookingTime } from './booking-rules';
+import { checkBookingTime, hasEnded } from './booking-rules';
 
 const now = new Date('2026-10-20T10:30:00Z');
 const at = (time: string) => new Date(`2026-10-20T${time}Z`);
@@ -55,5 +55,23 @@ describe('checkBookingTime: start and end relative to now', () => {
         checkBookingTime(at('11:00'), at('12:00'), now, currentStartsAt),
       ).toBeUndefined();
     });
+  });
+});
+
+describe('hasEnded: an ended booking cannot be changed or cancelled', () => {
+  it('is false for a booking in the future', () => {
+    expect(hasEnded({ endsAt: at('12:00') }, now)).toBe(false);
+  });
+
+  it('is false for a booking that is going on', () => {
+    expect(hasEnded({ endsAt: at('11:00') }, now)).toBe(false);
+  });
+
+  it('is true for a booking that ends exactly now', () => {
+    expect(hasEnded({ endsAt: at('10:30') }, now)).toBe(true);
+  });
+
+  it('is true for a booking in the past', () => {
+    expect(hasEnded({ endsAt: at('09:00') }, now)).toBe(true);
   });
 });

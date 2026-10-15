@@ -148,7 +148,7 @@ export class BookingsController {
     status: HttpStatus.BAD_REQUEST,
     path: BOOKING_PATH,
     description:
-      'Invalid input, wrong time range, inactive room or cancelled booking',
+      'Invalid input, wrong time range, inactive room, cancelled or ended booking',
     examples: [
       {
         message: 'Validation failed',
@@ -158,6 +158,7 @@ export class BookingsController {
       'endsAt must be in the future',
       'Room is not active',
       'Cancelled booking cannot be changed',
+      'Ended booking cannot be changed',
     ],
   })
   @ApiErrorResponse({
@@ -196,9 +197,10 @@ export class BookingsController {
   @ApiErrorResponse({
     status: HttpStatus.BAD_REQUEST,
     path: `${BOOKING_PATH}/cancel`,
-    description: 'Booking is already cancelled, or invalid id',
+    description: 'Booking is already cancelled or has ended, or invalid id',
     examples: [
       'Booking is already cancelled',
+      'Ended booking cannot be cancelled',
       'Validation failed (uuid is expected)',
     ],
   })

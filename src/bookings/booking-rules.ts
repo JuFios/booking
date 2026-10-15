@@ -62,6 +62,12 @@ export function canAccessBooking(
   return user.role === Role.admin || user.id === ownerId;
 }
 
+// An ended booking is history: PATCH and cancel are rejected. A booking that
+// is going on can still be changed or cancelled
+export function hasEnded(booking: { endsAt: Date }, now: Date): boolean {
+  return booking.endsAt <= now;
+}
+
 export function earliestStartEndingAfter(moment: Date): Date {
   return new Date(moment.getTime() - MAX_BOOKING_DURATION_MS);
 }
