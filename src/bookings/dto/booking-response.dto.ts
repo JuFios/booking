@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { BookingStatus } from '../../generated/prisma/client';
+import { PageMetaDto } from '../../common/dto/page-meta.dto';
 
 export class BookingRoomDto {
   @ApiProperty({ example: '8c1f2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f' })
@@ -50,4 +51,9 @@ export class BookingResponseDto {
 
   @ApiProperty({ example: '2026-10-13T10:00:00.000Z' })
   updatedAt!: Date;
+}
+
+export class BookingPageDto extends PageMetaDto {
+  @ApiProperty({ type: [BookingResponseDto] })
+  items!: BookingResponseDto[];
 }

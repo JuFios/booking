@@ -14,7 +14,7 @@ import {
 } from 'class-validator';
 
 // All times are passed in UTC: an explicit Z avoids guessing the client's time zone
-const UTC_SUFFIX = /Z$/;
+export const UTC_SUFFIX = /Z$/;
 
 export class CreateBookingDto {
   @ApiProperty({ example: '8c1f2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f' })

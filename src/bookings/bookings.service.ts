@@ -1,14 +1,22 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client';
+import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
+import { Page, toPage, toSkipTake } from '../common/utils/pagination';
+import { Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { checkBookingTime, checkRoomForBooking } from './booking-rules';
+import {
+  canAccessBooking,
+  checkBookingTime,
+  checkRoomForBooking,
+} from './booking-rules';
 import { BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 
 const bookingSelect = {
   id: true,
@@ -60,6 +68,66 @@ export class BookingsService {
       roomId: dto.roomId,
       userId,
     });
+  }
+
+  async findAll(
+    user: AuthenticatedUser,
+    query: ListBookingsQueryDto,
+  ): Promise<Page<BookingResponseDto>> {
+    const where = this.buildWhere(user, query);
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.booking.findMany({
+        where,
+        select: bookingSelect,
+        // id makes the order stable when two bookings start at the same time
+        orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+        ...toSkipTake(query),
+      }),
+      this.prisma.booking.count({ where }),
+    ]);
+
+    return toPage(rows, total, query);
+  }
+
+  async findOne(
+    user: AuthenticatedUser,
+    id: string,
+  ): Promise<BookingResponseDto> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      select: bookingSelect,
+    });
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (!canAccessBooking(user, booking.user.id)) {
+      throw new ForbiddenException('You can access only your own bookings');
+    }
+
+    return booking;
+  }
+
+  private buildWhere(
+    user: AuthenticatedUser,
+    query: ListBookingsQueryDto,
+  ): Prisma.BookingWhereInput {
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from >= to) {
+      throw new BadRequestException('from must be earlier than to');
+    }
+
+    return {
+      // a member sees only own bookings, an admin sees all
+      ...(user.role !== Role.admin && { userId: user.id }),
+      ...(query.roomId && { roomId: query.roomId }),
+      ...(query.status && { status: query.status }),
+      // the booking overlaps the period [from, to)
+      ...(from && { endsAt: { gt: from } }),
+      ...(to && { startsAt: { lt: to } }),
+    };
   }
 
   // INSERT ... ON CONFLICT DO NOTHING instead of prisma.booking.create():

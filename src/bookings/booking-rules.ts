@@ -1,3 +1,5 @@
+import { Role } from '../generated/prisma/client';
+
 // Pure functions without database access: easy to unit test.
 // Each returns an error message, or undefined when the rule holds.
 
@@ -40,4 +42,12 @@ export function checkRoomForBooking(
   }
 
   return undefined;
+}
+
+// Owner or admin: used by GET /bookings/:id, PATCH and cancel
+export function canAccessBooking(
+  user: { id: string; role: Role },
+  ownerId: string,
+): boolean {
+  return user.role === Role.admin || user.id === ownerId;
 }
