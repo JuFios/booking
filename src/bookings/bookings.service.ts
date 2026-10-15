@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
-import { Prisma, Role } from '../generated/prisma/client';
+import { BookingStatus, Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   canAccessBooking,
@@ -17,6 +17,9 @@ import {
 import { BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { UpdateBookingDto } from './dto/update-booking.dto';
+
+const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
 
 const bookingSelect = {
   id: true,
@@ -109,6 +112,99 @@ export class BookingsService {
     return booking;
   }
 
+  async update(
+    user: AuthenticatedUser,
+    id: string,
+    dto: UpdateBookingDto,
+  ): Promise<BookingResponseDto> {
+    const booking = await this.findAccessibleBooking(user, id);
+
+    const timeChanged = dto.startsAt !== undefined || dto.endsAt !== undefined;
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : booking.startsAt;
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : booking.endsAt;
+
+    if (timeChanged) {
+      const timeError = checkBookingTime(startsAt, endsAt, new Date());
+      if (timeError) {
+        throw new BadRequestException(timeError);
+      }
+
+      const roomError = checkRoomForBooking(
+        booking.room,
+        booking.attendeesCount,
+      );
+      if (roomError) {
+        throw new BadRequestException(roomError);
+      }
+    }
+
+    const { count } = await this.prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
+
+        return tx.booking.updateMany({
+          where: { id, status: BookingStatus.confirmed },
+          data: { title: dto.title, ...(timeChanged && { startsAt, endsAt }) },
+        });
+      })
+      .catch((error: unknown) => {
+        if (isOverlapError(error)) {
+          throw new ConflictException(ROOM_ALREADY_BOOKED);
+        }
+        throw error;
+      });
+    if (count === 0) {
+      throw new BadRequestException('Cancelled booking cannot be changed');
+    }
+
+    return this.prisma.booking.findUniqueOrThrow({
+      where: { id },
+      select: bookingSelect,
+    });
+  }
+
+  async cancel(
+    user: AuthenticatedUser,
+    id: string,
+  ): Promise<BookingResponseDto> {
+    await this.findAccessibleBooking(user, id);
+
+    const { count } = await this.prisma.booking.updateMany({
+      where: { id, status: BookingStatus.confirmed },
+      data: { status: BookingStatus.cancelled },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Booking is already cancelled');
+    }
+
+    return this.prisma.booking.findUniqueOrThrow({
+      where: { id },
+      select: bookingSelect,
+    });
+  }
+
+  private async findAccessibleBooking(user: AuthenticatedUser, id: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      select: {
+        userId: true,
+        startsAt: true,
+        endsAt: true,
+        attendeesCount: true,
+        room: { select: { id: true, isActive: true, capacity: true } },
+      },
+    });
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (!canAccessBooking(user, booking.userId)) {
+      throw new ForbiddenException('You can access only your own bookings');
+    }
+
+    return booking;
+  }
+
   private buildWhere(
     user: AuthenticatedUser,
     query: ListBookingsQueryDto,
@@ -153,7 +249,7 @@ export class BookingsService {
       RETURNING id`;
 
     if (inserted.length === 0) {
-      throw new ConflictException('Room is already booked for this time');
+      throw new ConflictException(ROOM_ALREADY_BOOKED);
     }
 
     return this.prisma.booking.findUniqueOrThrow({
@@ -161,4 +257,14 @@ export class BookingsService {
       select: bookingSelect,
     });
   }
+}
+
+function isOverlapError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  const meta = error.meta as
+    { driverAdapterError?: { cause?: { originalCode?: string } } } | undefined;
+  return meta?.driverAdapterError?.cause?.originalCode === '23P01';
 }

@@ -2,8 +2,11 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -28,6 +31,7 @@ import { BookingsService } from './bookings.service';
 import { BookingPageDto, BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { UpdateBookingDto } from './dto/update-booking.dto';
 
 @ApiTags('bookings')
 @ApiBearerAuth()
@@ -92,5 +96,60 @@ export class BookingsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<BookingResponseDto> {
     return this.bookingsService.findOne(user, id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Change the title or time of a booking (owner or admin)',
+  })
+  @ApiOkResponse({ type: BookingResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description:
+      'Invalid input, wrong time range, inactive room or cancelled booking',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'The booking belongs to another user',
+  })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'Booking not found',
+  })
+  @ApiConflictResponse({
+    type: ErrorResponseDto,
+    description: 'Room is already booked for this time',
+  })
+  update(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateBookingDto,
+  ): Promise<BookingResponseDto> {
+    return this.bookingsService.update(user, id, dto);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cancel a booking (owner or admin); the record is kept',
+  })
+  @ApiOkResponse({ type: BookingResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Booking is already cancelled',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'The booking belongs to another user',
+  })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'Booking not found',
+  })
+  cancel(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<BookingResponseDto> {
+    return this.bookingsService.cancel(user, id);
   }
 }
