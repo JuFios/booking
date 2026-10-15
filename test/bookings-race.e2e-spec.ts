@@ -7,6 +7,23 @@ import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const PARALLEL_REQUESTS = 20;
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+// 10:00 UTC a given number of days from today
+const daysAhead = (days: number): Date => {
+  const date = new Date(Date.now() + days * DAY_MS);
+  date.setUTCHours(10, 0, 0, 0);
+  return date;
+};
+
+const countStatuses = (responses: { status: number }[]) => {
+  const counts: Record<number, number> = {};
+  for (const { status } of responses) {
+    counts[status] = (counts[status] ?? 0) + 1;
+  }
+  return counts;
+};
 
 describe('Booking race (e2e)', () => {
   let app: INestApplication<App>;
@@ -58,9 +75,8 @@ describe('Booking race (e2e)', () => {
   });
 
   it(`gives exactly one booking for ${PARALLEL_REQUESTS} parallel requests on one slot`, async () => {
-    const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    startsAt.setUTCHours(10, 0, 0, 0);
-    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+    const startsAt = daysAhead(1);
+    const endsAt = new Date(startsAt.getTime() + 60 * MINUTE_MS);
 
     const responses = await Promise.all(
       Array.from({ length: PARALLEL_REQUESTS }, (_, i) =>
@@ -77,15 +93,57 @@ describe('Booking race (e2e)', () => {
       ),
     );
 
-    const statusCounts: Record<number, number> = {};
-    for (const { status } of responses) {
-      statusCounts[status] = (statusCounts[status] ?? 0) + 1;
-    }
     const bookingsInDb = await prisma.booking.count({ where: { roomId } });
 
-    expect({ statusCounts, bookingsInDb }).toEqual({
+    expect({ statusCounts: countStatuses(responses), bookingsInDb }).toEqual({
       statusCounts: { 201: 1, 409: PARALLEL_REQUESTS - 1 },
       bookingsInDb: 1,
+    });
+  });
+
+  it(`moves exactly one booking for ${PARALLEL_REQUESTS} parallel time changes into one slot`, async () => {
+    // Bookings in separate 15-minute slots, 30 minutes apart, two days ahead
+    const firstStart = daysAhead(2);
+    const ids = await Promise.all(
+      Array.from({ length: PARALLEL_REQUESTS }, async (_, i) => {
+        const startsAt = new Date(firstStart.getTime() + i * 30 * MINUTE_MS);
+        const response = await request(app.getHttpServer())
+          .post('/bookings')
+          .auth(accessToken, { type: 'bearer' })
+          .send({
+            roomId,
+            title: `Move ${i + 1}`,
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 15 * MINUTE_MS).toISOString(),
+            attendeesCount: 2,
+          })
+          .expect(201);
+        return (response.body as { id: string }).id;
+      }),
+    );
+
+    // Every booking is moved to the same free slot three days ahead
+    const startsAt = daysAhead(3);
+    const endsAt = new Date(startsAt.getTime() + 60 * MINUTE_MS);
+    const responses = await Promise.all(
+      ids.map((id) =>
+        request(app.getHttpServer())
+          .patch(`/bookings/${id}`)
+          .auth(accessToken, { type: 'bearer' })
+          .send({
+            startsAt: startsAt.toISOString(),
+            endsAt: endsAt.toISOString(),
+          }),
+      ),
+    );
+
+    const bookingsInSlot = await prisma.booking.count({
+      where: { roomId, startsAt, endsAt },
+    });
+
+    expect({ statusCounts: countStatuses(responses), bookingsInSlot }).toEqual({
+      statusCounts: { 200: 1, 409: PARALLEL_REQUESTS - 1 },
+      bookingsInSlot: 1,
     });
   });
 });
