@@ -13,13 +13,17 @@ import {
   canAccessBooking,
   checkBookingTime,
   checkRoomForBooking,
+  findFreeSlots,
 } from './booking-rules';
+import { AvailabilityResponseDto } from './dto/availability-response.dto';
 import { BookingResponseDto } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 
 const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
 
 const bookingSelect = {
   id: true,
@@ -181,6 +185,41 @@ export class BookingsService {
       where: { id },
       select: bookingSelect,
     });
+  }
+
+  async getAvailability(
+    roomId: string,
+    date: string,
+  ): Promise<AvailabilityResponseDto> {
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { isActive: true },
+    });
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
+
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+    const nextMinute = new Date(Math.ceil(Date.now() / MINUTE_MS) * MINUTE_MS);
+    const from = nextMinute > dayStart ? nextMinute : dayStart;
+
+    if (!room.isActive || from >= dayEnd) {
+      return { roomId, date, slots: [] };
+    }
+
+    const busy = await this.prisma.booking.findMany({
+      where: {
+        roomId,
+        status: BookingStatus.confirmed,
+        startsAt: { lt: dayEnd },
+        endsAt: { gt: from },
+      },
+      select: { startsAt: true, endsAt: true },
+      orderBy: { startsAt: 'asc' },
+    });
+
+    return { roomId, date, slots: findFreeSlots(busy, from, dayEnd) };
   }
 
   private async findAccessibleBooking(user: AuthenticatedUser, id: string) {

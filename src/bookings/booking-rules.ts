@@ -51,3 +51,33 @@ export function canAccessBooking(
 ): boolean {
   return user.role === Role.admin || user.id === ownerId;
 }
+
+export function findFreeSlots(
+  busy: { startsAt: Date; endsAt: Date }[],
+  from: Date,
+  to: Date,
+): { startsAt: Date; endsAt: Date }[] {
+  const slots: { startsAt: Date; endsAt: Date }[] = [];
+  let cursor = from;
+
+  for (const booking of busy) {
+    if (booking.startsAt > cursor) {
+      slots.push({
+        startsAt: cursor,
+        endsAt: booking.startsAt < to ? booking.startsAt : to,
+      });
+    }
+    if (booking.endsAt > cursor) {
+      cursor = booking.endsAt;
+    }
+  }
+  if (cursor < to) {
+    slots.push({ startsAt: cursor, endsAt: to });
+  }
+
+  return slots.filter(
+    (slot) =>
+      slot.endsAt.getTime() - slot.startsAt.getTime() >=
+      MIN_BOOKING_DURATION_MS,
+  );
+}
