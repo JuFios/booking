@@ -4,13 +4,13 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { type AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { Page, toPage, toSkipTake } from '../common/utils/pagination';
 import { BookingStatus, Prisma, Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  availabilityWindow,
   canAccessBooking,
   checkBookingTime,
   checkRoomForBooking,
@@ -24,8 +24,6 @@ import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 
 const ROOM_ALREADY_BOOKED = 'Room is already booked for this time';
-const MINUTE_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
 
 const bookingSelect = {
   id: true,
@@ -107,15 +105,8 @@ export class BookingsService {
       where: { id },
       select: bookingSelect,
     });
-    if (!booking) {
-      throw new NotFoundException('Booking not found');
-    }
 
-    if (!canAccessBooking(user, booking.user.id)) {
-      throw new ForbiddenException('You can access only your own bookings');
-    }
-
-    return booking;
+    return this.assertCanAccess(user, booking);
   }
 
   async update(
@@ -146,7 +137,9 @@ export class BookingsService {
 
     const { count } = await this.prisma
       .$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
+        if (timeChanged) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${booking.room.id}))`;
+        }
 
         return tx.booking.updateMany({
           where: { id, status: BookingStatus.confirmed },
@@ -163,10 +156,7 @@ export class BookingsService {
       throw new BadRequestException('Cancelled booking cannot be changed');
     }
 
-    return this.prisma.booking.findUniqueOrThrow({
-      where: { id },
-      select: bookingSelect,
-    });
+    return this.getBooking(id);
   }
 
   async cancel(
@@ -183,10 +173,7 @@ export class BookingsService {
       throw new BadRequestException('Booking is already cancelled');
     }
 
-    return this.prisma.booking.findUniqueOrThrow({
-      where: { id },
-      select: bookingSelect,
-    });
+    return this.getBooking(id);
   }
 
   async getAvailability(
@@ -201,12 +188,8 @@ export class BookingsService {
       throw new NotFoundException('Room not found');
     }
 
-    const dayStart = new Date(`${date}T00:00:00.000Z`);
-    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
-    const nextMinute = new Date(Math.ceil(Date.now() / MINUTE_MS) * MINUTE_MS);
-    const from = nextMinute > dayStart ? nextMinute : dayStart;
-
-    if (!room.isActive || from >= dayEnd) {
+    const window = availabilityWindow(date, new Date());
+    if (!room.isActive || !window) {
       return { roomId, date, slots: [] };
     }
 
@@ -214,36 +197,55 @@ export class BookingsService {
       where: {
         roomId,
         status: BookingStatus.confirmed,
-        startsAt: { gt: earliestStartEndingAfter(from), lt: dayEnd },
-        endsAt: { gt: from },
+        startsAt: { gt: earliestStartEndingAfter(window.from), lt: window.to },
+        endsAt: { gt: window.from },
       },
       select: { startsAt: true, endsAt: true },
       orderBy: { startsAt: 'asc' },
     });
 
-    return { roomId, date, slots: findFreeSlots(busy, from, dayEnd) };
+    return {
+      roomId,
+      date,
+      slots: findFreeSlots(busy, window.from, window.to),
+    };
   }
 
   private async findAccessibleBooking(user: AuthenticatedUser, id: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       select: {
-        userId: true,
         startsAt: true,
         endsAt: true,
         attendeesCount: true,
+        user: { select: { id: true } },
         room: { select: { id: true, isActive: true, capacity: true } },
       },
     });
+
+    return this.assertCanAccess(user, booking);
+  }
+
+  private assertCanAccess<T extends { user: { id: string } }>(
+    user: AuthenticatedUser,
+    booking: T | null,
+  ): T {
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
 
-    if (!canAccessBooking(user, booking.userId)) {
+    if (!canAccessBooking(user, booking.user.id)) {
       throw new ForbiddenException('You can access only your own bookings');
     }
 
     return booking;
+  }
+
+  private getBooking(id: string): Promise<BookingResponseDto> {
+    return this.prisma.booking.findUniqueOrThrow({
+      where: { id },
+      select: bookingSelect,
+    });
   }
 
   private buildWhere(
@@ -295,7 +297,7 @@ export class BookingsService {
       RETURNING id`.catch((error: unknown) => {
       const constraint = getForeignKeyViolation(error);
       if (constraint === 'Booking_userId_fkey') {
-        throw new UnauthorizedException('User not found');
+        throw new NotFoundException('User not found');
       }
       if (constraint === 'Booking_roomId_fkey') {
         throw new NotFoundException('Room not found');
@@ -307,10 +309,7 @@ export class BookingsService {
       throw new ConflictException(ROOM_ALREADY_BOOKED);
     }
 
-    return this.prisma.booking.findUniqueOrThrow({
-      where: { id: inserted[0].id },
-      select: bookingSelect,
-    });
+    return this.getBooking(inserted[0].id);
   }
 }
 

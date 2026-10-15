@@ -5,6 +5,8 @@ import { Role } from '../generated/prisma/client';
 
 export const MIN_BOOKING_DURATION_MS = 15 * 60 * 1000;
 export const MAX_BOOKING_DURATION_MS = 8 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
 
 export function checkBookingTime(
   startsAt: Date,
@@ -54,6 +56,18 @@ export function canAccessBooking(
 
 export function earliestStartEndingAfter(moment: Date): Date {
   return new Date(moment.getTime() - MAX_BOOKING_DURATION_MS);
+}
+
+export function availabilityWindow(
+  date: string,
+  now: Date,
+): { from: Date; to: Date } | undefined {
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+  const nextMinute = new Date(Math.ceil(now.getTime() / MINUTE_MS) * MINUTE_MS);
+  const from = nextMinute > dayStart ? nextMinute : dayStart;
+
+  return from < dayEnd ? { from, to: dayEnd } : undefined;
 }
 
 export function findFreeSlots(
