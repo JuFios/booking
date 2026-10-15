@@ -206,7 +206,7 @@ Every booking in the list comes with its room and user. The number of SQL querie
 | member | `GET /bookings?limit=100&from=…&to=…` | 100 | 4 |
 | any | `GET /rooms/:id/availability?date=…` | — | 2 |
 
-The 4 queries: bookings of the page, their rooms (one `WHERE id IN (...)`), their users (one `WHERE id IN (...)`) and `COUNT(*)` for `total`. Availability reads the room and then all confirmed bookings of that day in one query.
+The 4 queries: bookings of the page, their rooms (one `WHERE id IN (...)`), their users (one `WHERE id IN (...)`) and `COUNT(*)` for `total`. Availability reads the room and then all confirmed bookings of that day (and the first 15 minutes of the next one, so that a short tail at the end of the day is not lost) in one query.
 
 ### Indexes used by the booking filters
 

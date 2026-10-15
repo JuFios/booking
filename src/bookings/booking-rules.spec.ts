@@ -2,6 +2,7 @@ import { HOUR_MS } from '../common/utils/time';
 import {
   availabilityWindow,
   checkBookingTime,
+  findFreeSlots,
   hasEnded,
   MAX_BOOKING_ADVANCE_MS,
 } from './booking-rules';
@@ -124,5 +125,94 @@ describe('availabilityWindow: the part of a day that can still be booked', () =>
       from: new Date('2027-10-20T00:00:00Z'),
       to: later(now, MAX_BOOKING_ADVANCE_MS),
     });
+  });
+});
+
+describe('findFreeSlots: free time of a day', () => {
+  const dayStart = new Date('2026-10-21T00:00:00Z');
+  const dayEnd = new Date('2026-10-22T00:00:00Z');
+  const on = (day: number, time: string) => new Date(`2026-10-${day}T${time}Z`);
+  const busy = (startsAt: Date, endsAt: Date) => ({ startsAt, endsAt });
+
+  it('is the whole window for an empty room', () => {
+    expect(findFreeSlots([], dayStart, dayEnd)).toEqual([
+      { startsAt: dayStart, endsAt: dayEnd },
+    ]);
+  });
+
+  it('splits the day around a booking', () => {
+    expect(
+      findFreeSlots([busy(on(21, '10:00'), on(21, '11:00'))], dayStart, dayEnd),
+    ).toEqual([
+      { startsAt: dayStart, endsAt: on(21, '10:00') },
+      { startsAt: on(21, '11:00'), endsAt: dayEnd },
+    ]);
+  });
+
+  it('drops a gap shorter than 15 minutes between bookings', () => {
+    expect(
+      findFreeSlots(
+        [
+          busy(on(21, '10:00'), on(21, '11:00')),
+          busy(on(21, '11:10'), on(21, '12:00')),
+        ],
+        on(21, '10:00'),
+        dayEnd,
+      ),
+    ).toEqual([{ startsAt: on(21, '12:00'), endsAt: dayEnd }]);
+  });
+
+  it('keeps a last slot shorter than 15 minutes when the room stays free after midnight', () => {
+    expect(
+      findFreeSlots(
+        [busy(on(21, '10:00'), on(21, '23:50'))],
+        dayStart,
+        dayEnd,
+      ).pop(),
+    ).toEqual({ startsAt: on(21, '23:50'), endsAt: dayEnd });
+  });
+
+  it('drops a last slot when the next booking leaves less than 15 minutes', () => {
+    expect(
+      findFreeSlots(
+        [
+          busy(on(21, '10:00'), on(21, '23:50')),
+          busy(on(22, '00:04'), on(22, '01:00')),
+        ],
+        dayStart,
+        dayEnd,
+      ),
+    ).toEqual([{ startsAt: dayStart, endsAt: on(21, '10:00') }]);
+  });
+
+  it('keeps a last slot that leaves exactly 15 minutes before the next booking', () => {
+    expect(
+      findFreeSlots(
+        [
+          busy(on(21, '10:00'), on(21, '23:50')),
+          busy(on(22, '00:05'), on(22, '01:00')),
+        ],
+        on(21, '10:00'),
+        dayEnd,
+      ),
+    ).toEqual([{ startsAt: on(21, '23:50'), endsAt: dayEnd }]);
+  });
+
+  it('keeps a short tail of today when the room is free after midnight', () => {
+    const from = on(21, '23:55');
+
+    expect(findFreeSlots([], from, dayEnd)).toEqual([
+      { startsAt: from, endsAt: dayEnd },
+    ]);
+  });
+
+  it('ignores a booking that starts after the window plus the minimum duration', () => {
+    expect(
+      findFreeSlots(
+        [busy(on(22, '00:15'), on(22, '01:00'))],
+        on(21, '23:40'),
+        dayEnd,
+      ),
+    ).toEqual([{ startsAt: on(21, '23:40'), endsAt: dayEnd }]);
   });
 });

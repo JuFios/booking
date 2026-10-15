@@ -95,11 +95,22 @@ export function availabilityWindow(
   return from < to ? { from, to } : undefined;
 }
 
+// Free time is cut at the end of the window (midnight UTC or the 365-day limit),
+// but a slot that starts in the window is bookable if the room stays free for
+// 15 minutes, even past the cut. So busy bookings are needed up to this moment
+export function freeSlotLookupEnd(to: Date): Date {
+  return new Date(to.getTime() + MIN_BOOKING_DURATION_MS);
+}
+
+// busy: confirmed bookings sorted by startsAt, covering at least [from, freeSlotLookupEnd(to)).
+// A slot is reported only if the room is free for at least 15 minutes from its
+// start; the end of the last slot is cut at `to`, so it can be shorter
 export function findFreeSlots(
   busy: { startsAt: Date; endsAt: Date }[],
   from: Date,
   to: Date,
 ): { startsAt: Date; endsAt: Date }[] {
+  const lookupEnd = freeSlotLookupEnd(to);
   const slots: { startsAt: Date; endsAt: Date }[] = [];
   let cursor = from;
 
@@ -107,20 +118,26 @@ export function findFreeSlots(
     if (booking.startsAt > cursor) {
       slots.push({
         startsAt: cursor,
-        endsAt: booking.startsAt < to ? booking.startsAt : to,
+        endsAt: booking.startsAt < lookupEnd ? booking.startsAt : lookupEnd,
       });
     }
     if (booking.endsAt > cursor) {
       cursor = booking.endsAt;
     }
   }
-  if (cursor < to) {
-    slots.push({ startsAt: cursor, endsAt: to });
+  if (cursor < lookupEnd) {
+    slots.push({ startsAt: cursor, endsAt: lookupEnd });
   }
 
-  return slots.filter(
-    (slot) =>
-      slot.endsAt.getTime() - slot.startsAt.getTime() >=
-      MIN_BOOKING_DURATION_MS,
-  );
+  return slots
+    .filter(
+      (slot) =>
+        slot.startsAt < to &&
+        slot.endsAt.getTime() - slot.startsAt.getTime() >=
+          MIN_BOOKING_DURATION_MS,
+    )
+    .map((slot) => ({
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt < to ? slot.endsAt : to,
+    }));
 }

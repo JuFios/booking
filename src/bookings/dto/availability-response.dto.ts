@@ -18,7 +18,7 @@ export class AvailabilityResponseDto {
   @ApiProperty({
     type: [TimeSlotDto],
     description:
-      'Free time ranges of at least 15 minutes. Empty if the room is inactive, the day is over or the date is more than 365 days ahead',
+      'Free time ranges in which a booking of at least 15 minutes can start. The last range is cut at midnight UTC (or at the 365-day limit), so it can be shorter than 15 minutes when the room stays free after that. Empty if the room is inactive, the day is over or the date is more than 365 days ahead',
   })
   slots!: TimeSlotDto[];
 }

@@ -21,6 +21,7 @@ import {
   checkRoomForBooking,
   earliestStartEndingAfter,
   findFreeSlots,
+  freeSlotLookupEnd,
   hasEnded,
 } from './booking-rules';
 import { AvailabilityResponseDto } from './dto/availability-response.dto';
@@ -214,7 +215,10 @@ export class BookingsService {
       where: {
         roomId,
         status: BookingStatus.confirmed,
-        startsAt: { gt: earliestStartEndingAfter(window.from), lt: window.to },
+        startsAt: {
+          gt: earliestStartEndingAfter(window.from),
+          lt: freeSlotLookupEnd(window.to),
+        },
         endsAt: { gt: window.from },
       },
       select: { startsAt: true, endsAt: true },
