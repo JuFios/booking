@@ -1,7 +1,7 @@
 import { Role } from '../generated/prisma/client';
 
 // Pure functions without database access: easy to unit test.
-// Each returns an error message, or undefined when the rule holds.
+// The check* functions return an error message, or undefined when the rule holds.
 
 export const MIN_BOOKING_DURATION_MS = 15 * 60 * 1000;
 export const MAX_BOOKING_DURATION_MS = 8 * 60 * 60 * 1000;
