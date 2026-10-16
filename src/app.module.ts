@@ -1,10 +1,15 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import {
+  createPinoHttpOptions,
+  type LogLevel,
+} from './common/logging/logger.config';
 import { AppValidationPipe } from './common/pipes/app-validation.pipe';
 import { validateEnv } from './config/env.validation';
 import { EquipmentModule } from './equipment/equipment.module';
@@ -18,6 +23,14 @@ import { UsersModule } from './users/users.module';
     ConfigModule.forRoot({
       isGlobal: true,
       validate: validateEnv,
+    }),
+    LoggerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        pinoHttp: createPinoHttpOptions(
+          config.getOrThrow<LogLevel>('LOG_LEVEL'),
+        ),
+      }),
     }),
     ScheduleModule.forRoot(),
     PrismaModule,

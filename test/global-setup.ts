@@ -36,6 +36,7 @@ export default async function globalSetup(): Promise<void> {
 
   process.env.DATABASE_URL = testUrl.toString();
   process.env.NODE_ENV = 'test';
+  process.env.LOG_LEVEL ??= 'silent';
   for (const [name, value] of Object.entries(TEST_JWT_SECRETS)) {
     process.env[name] ??= value;
   }
