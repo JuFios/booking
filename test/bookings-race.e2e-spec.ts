@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -30,7 +31,7 @@ describe('Booking race (e2e)', () => {
   let accessToken: string;
   let roomId: string;
 
-  const run = Date.now();
+  const run = randomUUID();
   const email = `race-${run}@e2e.test`;
   const password = 'secret-pass-1';
 

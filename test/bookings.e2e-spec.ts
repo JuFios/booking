@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -58,7 +59,7 @@ describe('Bookings (e2e)', () => {
   let admin: { id: string; token: string };
   let roomId: string;
 
-  const run = Date.now();
+  const run = randomUUID();
   const emailFor = (name: string) => `${name}-${run}@e2e.test`;
   const password = 'secret-pass-1';
   const roomIds: string[] = [];
