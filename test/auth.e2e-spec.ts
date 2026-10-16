@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -10,14 +11,15 @@ import {
   REUSE_GRACE_PERIOD_MS,
   RefreshTokenPayload,
 } from '../src/auth/tokens.service';
+import { useRequestLogging } from '../src/common/logging/request-logging';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
 
-  // Unique per run, so the tests do not clash with existing data or each other
-  const run = Date.now();
+  // Random, not Date.now(): parallel e2e files can start in the same ms
+  const run = randomUUID();
   const emailFor = (name: string) => `${name}-${run}@e2e.test`;
   const password = 'secret-pass-1';
 
@@ -54,6 +56,7 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    useRequestLogging(app);
     await app.init();
     prisma = app.get(PrismaService);
 

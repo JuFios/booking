@@ -1,9 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import { useRequestLogging } from '../src/common/logging/request-logging';
 import { DAY_MS, MINUTE_MS } from '../src/common/utils/time';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -30,7 +32,7 @@ describe('Booking race (e2e)', () => {
   let accessToken: string;
   let roomId: string;
 
-  const run = Date.now();
+  const run = randomUUID();
   const email = `race-${run}@e2e.test`;
   const password = 'secret-pass-1';
 
@@ -40,6 +42,7 @@ describe('Booking race (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    useRequestLogging(app);
     await app.init();
     prisma = app.get(PrismaService);
 

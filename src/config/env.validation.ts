@@ -1,6 +1,8 @@
 import { plainToInstance } from 'class-transformer';
+import { LOG_LEVELS, type LogLevel } from '../common/logging/logger.config';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsString,
@@ -20,6 +22,9 @@ export enum NodeEnv {
 export class EnvironmentVariables {
   @IsEnum(NodeEnv)
   NODE_ENV: NodeEnv = NodeEnv.Development;
+
+  @IsIn(LOG_LEVELS)
+  LOG_LEVEL: LogLevel = 'info';
 
   @IsInt()
   @Min(1)
