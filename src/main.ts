@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { useRequestLogging } from './common/logging/request-logging';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  useRequestLogging(app);
   app.enableShutdownHooks();
 
   const swaggerConfig = new DocumentBuilder()

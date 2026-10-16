@@ -11,6 +11,7 @@ import {
   REUSE_GRACE_PERIOD_MS,
   RefreshTokenPayload,
 } from '../src/auth/tokens.service';
+import { useRequestLogging } from '../src/common/logging/request-logging';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Auth (e2e)', () => {
@@ -55,6 +56,7 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    useRequestLogging(app);
     await app.init();
     prisma = app.get(PrismaService);
 

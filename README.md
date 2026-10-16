@@ -111,7 +111,7 @@ src/
     decorators/        @Public, @Roles, @CurrentUser, @ApiErrorResponse (Swagger)
     filters/           AllExceptionsFilter: one error format for every error
     pipes/             AppValidationPipe: whitelist, rejects an array as a body
-    logging/           pino-http options
+    logging/           pino-http options, request logging mounted before the body parser
     dto/               shared DTOs: error response, pagination query and page meta
     utils/             pagination, time constants, Postgres error codes
   auth/                register, login, refresh with rotation, logout, hourly cleanup of expired tokens

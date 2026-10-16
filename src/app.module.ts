@@ -26,10 +26,13 @@ import { UsersModule } from './users/users.module';
     }),
     LoggerModule.forRootAsync({
       inject: [ConfigService],
+      // The request middleware is mounted by useRequestLogging, before the body
+      // parser; these options are for the logs made outside a request
       useFactory: (config: ConfigService) => ({
         pinoHttp: createPinoHttpOptions(
           config.getOrThrow<LogLevel>('LOG_LEVEL'),
         ),
+        useExisting: true,
       }),
     }),
     ScheduleModule.forRoot(),

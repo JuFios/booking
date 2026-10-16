@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { useRequestLogging } from '../src/common/logging/request-logging';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Health (e2e)', () => {
@@ -19,6 +20,7 @@ describe('Health (e2e)', () => {
       }).compile();
 
       app = moduleRef.createNestApplication();
+      useRequestLogging(app);
       await app.init();
     });
 
@@ -41,6 +43,8 @@ describe('Health (e2e)', () => {
         error: 'Payload Too Large',
         path: '/health',
       });
+      // the body parser rejects it, so the request logger must run before it
+      expect(response.headers['x-request-id']).toEqual(expect.any(String));
     });
   });
 
@@ -57,6 +61,7 @@ describe('Health (e2e)', () => {
 
       // the 503 is expected here, so its error log would only be noise
       app = moduleRef.createNestApplication({ logger: false });
+      useRequestLogging(app);
       await app.init();
     });
 

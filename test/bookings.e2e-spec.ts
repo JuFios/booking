@@ -6,6 +6,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { TokensResponseDto } from '../src/auth/dto/tokens-response.dto';
+import { useRequestLogging } from '../src/common/logging/request-logging';
 import { DAY_MS, HOUR_MS, MINUTE_MS } from '../src/common/utils/time';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -145,6 +146,7 @@ describe('Bookings (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    useRequestLogging(app);
     await app.init();
     prisma = app.get(PrismaService);
 
@@ -561,10 +563,13 @@ describe('Bookings (e2e)', () => {
     });
 
     it('returns 400 for a body that is not JSON', async () => {
-      await call('post', '/bookings', owner.token)
+      const response = await call('post', '/bookings', owner.token)
         .set('Content-Type', 'application/json')
         .send('{"roomId": ')
         .expect(400);
+
+      // the body parser rejects it, so the request logger must run before it
+      expect(response.headers['x-request-id']).toEqual(expect.any(String));
     });
 
     it.each([
