@@ -551,14 +551,15 @@ describe('Bookings (e2e)', () => {
       expect((response.body as ErrorBody).statusCode).toBe(400);
     });
 
+    // Bodies are built inside the test: roomId is set only in beforeEach
     it.each([
-      ['an array', [valid()]],
-      ['an empty object', {}],
-      ['a string', '"text"'],
+      ['an array', () => [valid()]],
+      ['an empty object', () => ({})],
+      ['a string', () => '"text"'],
     ])('POST /bookings returns 400 for a body that is %s', async (_, body) => {
       await call('post', '/bookings', owner.token)
         .set('Content-Type', 'application/json')
-        .send(body)
+        .send(body())
         .expect(400);
     });
 

@@ -73,13 +73,13 @@ Request logs are off during the e2e tests, whatever `LOG_LEVEL` is in `.env`; `L
 Logs are JSON, one line per request, written to stdout by `nestjs-pino`:
 
 ```json
-{"level":40,"time":1792136787189,"req":{"id":"abc-1","method":"POST","url":"/auth/login"},"res":{"statusCode":401},"responseTime":96,"msg":"request completed"}
+{"level":40,"time":1792136787189,"pid":1,"hostname":"api","req":{"id":"abc-1","method":"POST","url":"/auth/login"},"res":{"statusCode":401},"responseTime":96,"msg":"request completed"}
 ```
 
 - The level follows the status: 2xx and 3xx `info`, 4xx `warn`, 5xx `error`. `userId` is added when the request is authenticated.
 - Only the method, url, id and status of a request are logged. Headers (`Authorization`, `Cookie`) and bodies (passwords, refresh tokens) are never written.
 - `x-request-id` from the request is used as the request id if it is up to 64 characters of letters, digits, `_`, `.` or `-`; otherwise an id is generated. The id is returned in the `x-request-id` response header, so a client can quote it when it reports a problem.
-- `GET /health` is not logged (also with a query string or a trailing slash), so frequent health probes do not fill the log.
+- Requests to `/health` are not logged (any method, also with a query string or a trailing slash), so frequent health probes do not fill the log. A 503 from it is still logged by `AllExceptionsFilter`.
 - The level is set by `LOG_LEVEL` (`fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`; default `info`). Unexpected 500 errors are logged with the stack by `AllExceptionsFilter`.
 
 ## Environment variables

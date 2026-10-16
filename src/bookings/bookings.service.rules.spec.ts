@@ -273,7 +273,7 @@ describe('BookingsService: access to a booking', () => {
 describe('BookingsService.findAll: who sees what', () => {
   const query = { page: 1, limit: 20 };
 
-  it('limits a member to own bookings, even when another user is asked for', async () => {
+  it('limits a member to own bookings', async () => {
     const { service, prisma } = createService();
 
     await service.findAll(owner, query);

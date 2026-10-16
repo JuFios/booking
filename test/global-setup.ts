@@ -32,10 +32,16 @@ export default async function globalSetup(): Promise<void> {
     await admin.end();
   }
 
-  execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
-    env: { ...process.env, DATABASE_URL: testUrl.toString() },
-    stdio: 'pipe',
-  });
+  // The CLI through node, not npx: on Windows npx is npx.cmd, which
+  // execFileSync cannot start without a shell
+  execFileSync(
+    process.execPath,
+    [require.resolve('prisma/build/index.js'), 'migrate', 'deploy'],
+    {
+      env: { ...process.env, DATABASE_URL: testUrl.toString() },
+      stdio: 'pipe',
+    },
+  );
 
   process.env.DATABASE_URL = testUrl.toString();
   process.env.NODE_ENV = 'test';
