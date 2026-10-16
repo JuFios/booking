@@ -34,8 +34,12 @@ interface Slot {
 
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
 
+// One "today" for the whole file: a test that computes the same day twice
+// must get the same date even if the run crosses midnight UTC
+const today = Date.now();
+
 const dayAt = (daysAhead: number, hour = 10, minute = 0): Date => {
-  const date = new Date(Date.now() + daysAhead * DAY_MS);
+  const date = new Date(today + daysAhead * DAY_MS);
   date.setUTCHours(hour, minute, 0, 0);
   return date;
 };
