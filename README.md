@@ -58,6 +58,8 @@ npm run test:e2e  # e2e tests on a fresh test database
 
 `npm run test:e2e` is the only command needed. Before the tests it creates the database `<name>_test` next to the one from `DATABASE_URL` (for example `booking_test`), drops it if it is left from a previous run, applies all migrations and points the tests at it. The development database is not touched. It needs Postgres to be running (`docker compose up -d db`).
 
+Request logs are off during the e2e tests, whatever `LOG_LEVEL` is in `.env`; `LOG_LEVEL=info npm run test:e2e` turns them on.
+
 - **Unit tests** (`src/**/*.spec.ts`): the booking rules as pure functions (`booking-rules.spec.ts`), the service with a mocked database (`bookings.service*.spec.ts`: what is checked and in which order, access by owner and admin, 409/404/400 answers, the advisory lock), the error filter, the DTOs and the logger setup.
 - **E2E tests** (`test/*.e2e-spec.ts`) run the whole application against Postgres:
   - `auth`: registration, login, refresh rotation with reuse detection, logout, roles;
