@@ -1,21 +1,18 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
-  ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { ApiErrorResponse } from '../common/decorators/api-error-response.decorator';
 import {
   type AuthenticatedUser,
   CurrentUser,
 } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
-import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -31,11 +28,28 @@ export class AuthController {
   @Public()
   @Post('register')
   @ApiOperation({ summary: 'Register a new member' })
-  @ApiCreatedResponse({ type: UserResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiConflictResponse({
-    type: ErrorResponseDto,
+  @ApiCreatedResponse({
+    type: UserResponseDto,
+    description: 'The registered user',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/auth/register',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: [
+          'email must be an email',
+          'password must be longer than or equal to 8 characters',
+        ],
+      },
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.CONFLICT,
+    path: '/auth/register',
     description: 'User with this email already exists',
+    examples: ['User already exists'],
   })
   register(@Body() dto: RegisterDto): Promise<UserResponseDto> {
     return this.authService.register(dto);
@@ -45,11 +59,21 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Log in and get access and refresh tokens' })
-  @ApiOkResponse({ type: TokensResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiUnauthorizedResponse({
-    type: ErrorResponseDto,
-    description: 'Invalid email or password',
+  @ApiOkResponse({
+    type: TokensResponseDto,
+    description: 'Access and refresh tokens',
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/auth/login',
+    examples: [
+      { message: 'Validation failed', details: ['email must be an email'] },
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    path: '/auth/login',
+    examples: ['Invalid email or password'],
   })
   login(@Body() dto: LoginDto): Promise<TokensResponseDto> {
     return this.authService.login(dto);
@@ -61,11 +85,22 @@ export class AuthController {
   @ApiOperation({
     summary: 'Get a new token pair; the used refresh token stops working',
   })
-  @ApiOkResponse({ type: TokensResponseDto })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiUnauthorizedResponse({
-    type: ErrorResponseDto,
+  @ApiOkResponse({ type: TokensResponseDto, description: 'A new token pair' })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/auth/refresh',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['refreshToken must be a jwt string'],
+      },
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    path: '/auth/refresh',
     description: 'Refresh token is invalid, expired or already used',
+    examples: ['Invalid refresh token'],
   })
   refresh(@Body() dto: RefreshTokenDto): Promise<TokensResponseDto> {
     return this.authService.refresh(dto);
@@ -76,8 +111,26 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke a refresh token' })
   @ApiNoContentResponse({ description: 'Refresh token revoked' })
-  @ApiBadRequestResponse({ type: ErrorResponseDto })
-  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiErrorResponse({
+    status: HttpStatus.BAD_REQUEST,
+    path: '/auth/logout',
+    examples: [
+      {
+        message: 'Validation failed',
+        details: ['refreshToken must be a jwt string'],
+      },
+    ],
+  })
+  @ApiErrorResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    path: '/auth/logout',
+    description: 'Missing or invalid access token, or invalid refresh token',
+    examples: [
+      'Missing access token',
+      'Invalid or expired access token',
+      'Invalid refresh token',
+    ],
+  })
   logout(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RefreshTokenDto,

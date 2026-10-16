@@ -1,9 +1,11 @@
-import { Module, ValidationPipe } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
+import { BookingsModule } from './bookings/bookings.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AppValidationPipe } from './common/pipes/app-validation.pipe';
 import { validateEnv } from './config/env.validation';
 import { EquipmentModule } from './equipment/equipment.module';
 import { HealthModule } from './health/health.module';
@@ -24,11 +26,12 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     EquipmentModule,
     RoomsModule,
+    BookingsModule,
   ],
   providers: [
     {
       provide: APP_PIPE,
-      useValue: new ValidationPipe({
+      useValue: new AppValidationPipe({
         whitelist: true,
         forbidNonWhitelisted: true,
         transform: true,

@@ -1,6 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class ListRoomsQueryDto extends PaginationQueryDto {
@@ -35,4 +42,17 @@ export class ListRoomsQueryDto extends PaginationQueryDto {
   )
   @IsUUID('all', { each: true })
   equipment?: string[];
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description: 'true: only rooms that can be booked; false: only inactive',
+  })
+  @IsOptional()
+  // Query values are strings: only "true" and "false" become booleans,
+  // anything else stays a string and fails @IsBoolean
+  @Transform(({ value }: { value: unknown }) =>
+    value === 'true' ? true : value === 'false' ? false : value,
+  )
+  @IsBoolean()
+  isActive?: boolean;
 }

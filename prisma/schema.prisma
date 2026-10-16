@@ -40,6 +40,7 @@ model RefreshToken {
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([userId])
+  @@index([expiresAt])
 }
 
 model Room {
@@ -90,4 +91,5 @@ model Booking {
 
   @@index([roomId, startsAt])
   @@index([userId, startsAt])
+  @@index([startsAt, id])
 }

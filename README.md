@@ -41,7 +41,7 @@ Creates the admin account from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` and 
 npx prisma db seed
 ```
 
-`SEED_BULK=true` additionally creates 20 equipment items and 5000 rooms. On a small table Postgres always reads the whole table, so this data set is needed to see indexes in `EXPLAIN ANALYZE`:
+`SEED_BULK=true` additionally creates 20 equipment items, 5000 rooms, 200 users and 100 000 bookings (20 per room, September–October 2026, every tenth one cancelled). Bulk users get a random password and cannot log in. On a small table Postgres always reads the whole table, so this data set is needed to see indexes in `EXPLAIN ANALYZE`:
 
 ```bash
 SEED_BULK=true npx prisma db seed
@@ -49,9 +49,69 @@ SEED_BULK=true npx prisma db seed
 
 The seed runs from your machine only (it needs `ts-node` and the generated Prisma client from `npm install`), not inside the API container. It works in both modes above, because the database port 5432 is published to the host.
 
+## Double booking protection
+
+Two confirmed bookings of one room must not overlap in time, even when the requests arrive at the same moment. A check in the service is not enough: two requests can both run `SELECT` and see a free slot before either of them has inserted its row, and then both insert.
+
+The rule lives in the database (migration `20261014143825_booking_constraints`):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE "Booking"
+  ADD CONSTRAINT "Booking_no_overlap" EXCLUDE USING gist (
+    "roomId" WITH =,
+    tstzrange("startsAt", "endsAt", '[)') WITH &&
+  ) WHERE (status = 'confirmed');
+```
+
+- Postgres rejects a row if a confirmed booking of the same room (`=`) has an overlapping time range (`&&`).
+- `btree_gist` lets one GiST index combine `=` on a uuid with `&&` on a range.
+- `'[)'` includes the start and excludes the end, so 10:00–11:00 and 11:00–12:00 do not overlap.
+- `WHERE (status = 'confirmed')` ignores cancelled bookings, so cancelling frees the slot.
+- CHECK constraints repeat the time rules of the service: a duration from 15 minutes to 8 hours (`startsAt < endsAt` follows from the 15-minute minimum).
+
+How each operation works with the constraint:
+
+| Operation | SQL | Slot is taken |
+|---|---|---|
+| `POST /bookings` | `SELECT … FROM "Room" … FOR SHARE`, then `INSERT … ON CONFLICT ON CONSTRAINT "Booking_no_overlap" DO NOTHING RETURNING id` | no row is returned → 409 |
+| `PATCH /bookings/:id` with a new time | `pg_advisory_xact_lock(hashtext(roomId))`, `SELECT … FROM "Room" … FOR SHARE`, then `UPDATE … WHERE status = 'confirmed'` | Postgres error `23P01` → 409 |
+| `POST /bookings/:id/cancel` | `UPDATE … SET status = 'cancelled' WHERE status = 'confirmed'` | — (of parallel cancels only one changes the row) |
+
+- **Why `ON CONFLICT DO NOTHING`.** A plain `INSERT` writes the row first and then checks the constraint. Parallel inserts into one slot wait for each other and Postgres aborts some of them as a deadlock (114 of 800 inserts in a test). With `ON CONFLICT` Postgres checks the constraint first and skips the row: 0 deadlocks. `ON CONSTRAINT "Booking_no_overlap"` limits the skip to this constraint: any other conflict (for example, a unique constraint added later) stays an error instead of a false 409.
+- **Why the advisory lock in `PATCH`.** `UPDATE` has no `ON CONFLICT`, and parallel updates into one slot deadlock the same way. The lock makes time changes within one room run one after another; it is taken only when the time changes and is released at the end of the transaction. The constraint still decides whether the new time is free. After taking the lock, `PATCH` reads the booking again and checks the rules against that fresh row, so two parallel changes of one booking do not overwrite each other's field with stale values.
+  - Measured with a one-off script, without the lock: 20 connections send `UPDATE` into one slot at the same moment, 10 rounds. 38 of 200 updates were aborted as a deadlock (`40P01`); the API would answer them with 409 "try again" and a warning in the log instead of letting them wait their turn.
+  - Through the API the requests reach the database less simultaneously, so the `PATCH` race test passes even without the lock. It checks the outcome (one 200, the rest 409) and that `23P01` turns into 409, not the deadlock itself.
+  - `hashtext(roomId)` turns the uuid into the integer key that `pg_advisory_xact_lock` needs. Two rooms with the same hash only wait for each other, which is harmless.
+  - The lock is not a second protection against double booking: without it the result stays correct, only some requests would fail with 409 "try again".
+  - A request that waits for the room lock longer than 5 s (`SET LOCAL lock_timeout`) gets 503 "Database is busy, try again", so a stuck lock holder cannot block requests and their database connections forever. A deadlock (`40P01`, `P2034`) is a 409 "Concurrent update conflict, try again".
+
+Two solutions were tried, both are in the commit history: a transaction that locks the room row with `SELECT … FOR UPDATE`, and the exclusion constraint. The constraint was kept: `FOR UPDATE` protects only the code paths that remember to take the lock, while the constraint holds for every writer, including future endpoints and scripts.
+
+`test/bookings-race.e2e-spec.ts` sends 20 parallel `POST /bookings` for one slot:
+
+| Version | 201 | 409 | Bookings in the database |
+|---|---|---|---|
+| Naive (`SELECT`, then `INSERT`) | 7–8 | 12–13 | 7–8 |
+| `SELECT … FOR UPDATE` on the room | 1 | 19 | 1 |
+| Exclusion constraint (final) | 1 | 19 | 1 |
+
+The second test in the same file moves 20 bookings into one slot with parallel `PATCH /bookings/:id`: one 200, nineteen 409, one booking in the slot.
+
+### Room changes and bookings
+
+A booking also depends on its room: the room must be active and `attendeesCount` must not exceed `capacity`. Without a lock a booking could pass these checks while an admin deactivates the room or lowers its capacity in a parallel request.
+
+- `POST /bookings` and a time change in `PATCH /bookings/:id` read the room with `FOR SHARE` in the same transaction as the write.
+- `PATCH /rooms/:id` locks the room with `FOR NO KEY UPDATE` before changing it. A new `capacity` must not be less than `attendeesCount` of any confirmed booking that has not ended yet, otherwise 409.
+- `FOR SHARE` and `FOR NO KEY UPDATE` wait for each other, so a room change and a booking in that room run one after another and each sees the result of the other. Bookings do not wait for each other: two `FOR SHARE` locks on one row are compatible.
+- `FOR NO KEY UPDATE` instead of `FOR UPDATE`: it does not block the foreign key checks of new bookings, which take `FOR KEY SHARE` on the room.
+- Parallel `PATCH /rooms/:id` with `equipmentIds` also run one after another, so they no longer collide on the room–equipment links.
+
 ## Performance
 
-Measured on the bulk data set (`SEED_BULK=true`: 5008 rooms, 23 equipment items, 10013 room–equipment links).
+Measured on the bulk data set (`SEED_BULK=true`: 5008 rooms, 23 equipment items, 10013 room–equipment links, 201 users, 100 000 bookings).
 
 ### No N+1 in `GET /rooms`
 
@@ -129,4 +189,121 @@ To reproduce:
 SEED_BULK=true npx prisma db seed
 docker compose exec db psql -U booking -d booking -c 'ANALYZE "Room"; ANALYZE "RoomEquipment";'
 docker compose exec db psql -U booking -d booking -c 'EXPLAIN (ANALYZE, COSTS OFF) SELECT count(*) FROM "Room" WHERE floor = 3'
+```
+
+### No N+1 in `GET /bookings`
+
+Every booking in the list comes with its room and user. The number of SQL queries does not depend on the page size or the role (counted with `log_statement = 'all'`):
+
+| Who | Request | Bookings on the page | SQL queries |
+|---|---|---|---|
+| admin | `GET /bookings?limit=5` | 5 | 4 |
+| admin | `GET /bookings?limit=20` | 20 | 4 |
+| admin | `GET /bookings?limit=100` | 100 | 4 |
+| admin | `GET /bookings?limit=100&status=confirmed&from=…&to=…` | 100 | 4 |
+| admin | `GET /bookings?roomId=…&limit=100` | 20 | 4 |
+| member | `GET /bookings?limit=5` | 5 | 4 |
+| member | `GET /bookings?limit=100` | 100 | 4 |
+| member | `GET /bookings?limit=100&from=…&to=…` | 100 | 4 |
+| any | `GET /rooms/:id/availability?date=…` | — | 2 |
+
+The 4 queries: bookings of the page, their rooms (one `WHERE id IN (...)`), their users (one `WHERE id IN (...)`) and `COUNT(*)` for `total`. Availability reads the room and then all confirmed bookings of that day (and the first 15 minutes of the next one, so that a short tail at the end of the day is not lost) in one query.
+
+### Indexes used by the booking filters
+
+| Index | Used by |
+|---|---|
+| `Booking_userId_startsAt_idx` (`userId`, `startsAt`) | a member's list: own bookings, sorted by time, with a period |
+| `Booking_roomId_startsAt_idx` (`roomId`, `startsAt`) | `roomId` filter, availability of a room |
+| `Booking_startsAt_id_idx` (`startsAt`, `id`) | an admin's list without `roomId`: sorting and the period filter |
+| `Booking_no_overlap` (GiST, `roomId` + time range) | the exclusion constraint against double booking |
+
+A booking overlaps the period `[from, to)` when `endsAt > from` and `startsAt < to`. `endsAt > from` alone cannot use an index on `startsAt`, so the service also adds `startsAt > from − 8 hours`: a booking lasts at most 8 hours, so one that ends after `from` started later than `from − 8 hours`. The `Booking_duration_max_8h` CHECK constraint guarantees this in the database. With both bounds the index reads only the requested period.
+
+`status` has no index of its own: it has two values, and it is checked on the rows already found by the other conditions.
+
+Plans from `EXPLAIN (ANALYZE, COSTS OFF)` after `VACUUM ANALYZE "Booking";`.
+
+A member's page (`userId = …`, `ORDER BY "startsAt", id LIMIT 20`):
+
+```
+Limit (actual time=0.318..0.322 rows=20 loops=1)
+  ->  Incremental Sort (actual time=0.317..0.318 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Presorted Key: "startsAt"
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+        ->  Index Scan using "Booking_userId_startsAt_idx" on "Booking" (actual time=0.036..0.234 rows=26 loops=1)
+              Index Cond: ("userId" = 'e1c4c627-316b-4175-923a-44b5108ccac5'::uuid)
+Planning Time: 0.738 ms
+Execution Time: 0.378 ms
+```
+
+A member's page for October (`from=2026-10-01`, `to=2026-10-31`):
+
+```
+Limit (actual time=0.180..0.182 rows=20 loops=1)
+  ->  Incremental Sort (actual time=0.179..0.180 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Presorted Key: "startsAt"
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+        ->  Index Scan using "Booking_userId_startsAt_idx" on "Booking" (actual time=0.022..0.147 rows=26 loops=1)
+              Index Cond: (("userId" = 'e1c4c627-316b-4175-923a-44b5108ccac5'::uuid) AND ("startsAt" > '2026-09-30 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-31 00:00:00+00'::timestamp with time zone))
+              Filter: ("endsAt" > '2026-10-01 00:00:00+00'::timestamp with time zone)
+Planning Time: 0.405 ms
+Execution Time: 0.204 ms
+```
+
+`roomId = …`:
+
+```
+Limit (actual time=0.055..0.058 rows=20 loops=1)
+  ->  Sort (actual time=0.055..0.056 rows=20 loops=1)
+        Sort Key: "startsAt", id
+        Sort Method: quicksort  Memory: 27kB
+        ->  Bitmap Heap Scan on "Booking" (actual time=0.036..0.037 rows=20 loops=1)
+              Recheck Cond: ("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid)
+              Heap Blocks: exact=1
+              ->  Bitmap Index Scan on "Booking_roomId_startsAt_idx" (actual time=0.026..0.026 rows=20 loops=1)
+                    Index Cond: ("roomId" = '8e170bcb-8731-4ce7-be0b-cbc74c26cef1'::uuid)
+Planning Time: 0.334 ms
+Execution Time: 0.079 ms
+```
+
+An admin's page without filters reads the first 20 rows of `Booking_startsAt_id_idx` (before this index: a sequential scan of all 100 000 rows and a sort, 10 ms):
+
+```
+Limit (actual time=0.010..0.090 rows=20 loops=1)
+  ->  Index Scan using "Booking_startsAt_id_idx" on "Booking" (actual time=0.010..0.088 rows=20 loops=1)
+Planning Time: 0.306 ms
+Execution Time: 0.107 ms
+```
+
+An admin's page for October with `status=confirmed` (before: a sequential scan, 7.7 ms):
+
+```
+Limit (actual time=0.981..0.993 rows=20 loops=1)
+  ->  Index Scan using "Booking_startsAt_id_idx" on "Booking" (actual time=0.980..0.991 rows=20 loops=1)
+        Index Cond: (("startsAt" > '2026-09-30 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-31 00:00:00+00'::timestamp with time zone))
+        Filter: (("endsAt" > '2026-10-01 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
+        Rows Removed by Filter: 333
+Planning Time: 0.369 ms
+Execution Time: 1.006 ms
+```
+
+Availability of a room for 2026-10-21:
+
+```
+Index Scan using "Booking_roomId_startsAt_idx" on "Booking" (actual time=0.059..0.059 rows=1 loops=1)
+  Index Cond: (("roomId" = '9351734f-f883-4f1c-b7bb-cec095f1feb7'::uuid) AND ("startsAt" > '2026-10-20 16:00:00+00'::timestamp with time zone) AND ("startsAt" < '2026-10-22 00:15:00+00'::timestamp with time zone))
+  Filter: (("endsAt" > '2026-10-21 00:00:00+00'::timestamp with time zone) AND (status = 'confirmed'::"BookingStatus"))
+Planning Time: 0.785 ms
+Execution Time: 0.103 ms
+```
+
+To reproduce:
+
+```bash
+SEED_BULK=true npx prisma db seed
+docker compose exec db psql -U booking -d booking -c 'VACUUM ANALYZE "Booking";'
+docker compose exec db psql -U booking -d booking -c 'EXPLAIN (ANALYZE, COSTS OFF) SELECT * FROM "Booking" ORDER BY "startsAt", id LIMIT 20'
 ```

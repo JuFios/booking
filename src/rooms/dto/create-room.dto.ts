@@ -5,13 +5,13 @@ import {
   IsArray,
   IsInt,
   IsNotEmpty,
-  IsOptional,
   IsString,
   IsUUID,
   Max,
   MaxLength,
   Min,
   NotContains,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateRoomDto {
@@ -43,7 +43,8 @@ export class CreateRoomDto {
     format: 'uuid',
     example: ['3f1c7e2a-8b4d-4c2e-9f6a-1d2e3f4a5b6c'],
   })
-  @IsOptional()
+  // may be omitted, but an explicit null is rejected (@IsOptional would accept it)
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @ArrayUnique()
   @IsUUID('all', { each: true })
