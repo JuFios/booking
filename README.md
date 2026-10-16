@@ -49,6 +49,112 @@ SEED_BULK=true npx prisma db seed
 
 The seed runs from your machine only (it needs `ts-node` and the generated Prisma client from `npm install`), not inside the API container. It works in both modes above, because the database port 5432 is published to the host.
 
+## Tests
+
+```bash
+npm test          # unit tests, no database needed
+npm run test:e2e  # e2e tests on a fresh test database
+```
+
+`npm run test:e2e` is the only command needed. Before the tests it creates the database `<name>_test` next to the one from `DATABASE_URL` (for example `booking_test`), drops it if it is left from a previous run, applies all migrations and points the tests at it. The development database is not touched. It needs Postgres to be running (`docker compose up -d db`).
+
+- **Unit tests** (`src/**/*.spec.ts`): the booking rules as pure functions (`booking-rules.spec.ts`), the service with a mocked database (`bookings.service*.spec.ts`: what is checked and in which order, access by owner and admin, 409/404/400 answers, the advisory lock), the error filter, the DTOs and the logger setup.
+- **E2E tests** (`test/*.e2e-spec.ts`) run the whole application against Postgres:
+  - `auth`: registration, login, refresh rotation with reuse detection, logout, roles;
+  - `bookings`: the full cycle (create, read, list, change, cancel, the slot is free again), 401 without a token, 403 for other users' bookings, overlaps, every booking rule, invalid input (always 400 or 404, never 500), list filters and availability;
+  - `bookings-race`: 20 parallel requests for one slot give one 201 and nineteen 409, and the same for parallel `PATCH`;
+  - `health`.
+- Each e2e file creates its own users and rooms with unique names and removes them afterwards, so the files can run in parallel.
+
+## Logging
+
+Logs are JSON, one line per request, written to stdout by `nestjs-pino`:
+
+```json
+{"level":40,"time":1792136787189,"req":{"id":"abc-1","method":"POST","url":"/auth/login"},"res":{"statusCode":401},"responseTime":96,"msg":"request completed"}
+```
+
+- The level follows the status: 2xx and 3xx `info`, 4xx `warn`, 5xx `error`. `userId` is added when the request is authenticated.
+- Only the method, url, id and status of a request are logged. Headers (`Authorization`, `Cookie`) and bodies (passwords, refresh tokens) are never written.
+- `x-request-id` from the request is used as the request id if it is up to 64 characters of letters, digits, `_`, `.` or `-`; otherwise an id is generated. The id is returned in the `x-request-id` response header, so a client can quote it when it reports a problem.
+- `GET /health` is not logged, so the Docker healthcheck does not fill the log.
+- The level is set by `LOG_LEVEL` (`fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`; default `info`). Unexpected 500 errors are logged with the stack by `AllExceptionsFilter`.
+
+## Environment variables
+
+Validated at start (`src/config/env.validation.ts`): the application does not start with a missing or invalid value. `.env.example` lists all of them.
+
+| Variable | Meaning |
+|---|---|
+| `NODE_ENV` | `development`, `production` or `test` |
+| `PORT` | HTTP port, default 3000 |
+| `LOG_LEVEL` | see Logging, default `info` |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | used by `docker-compose.yml` to create the database |
+| `DATABASE_URL` | connection string of the application |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | at least 32 characters, must be different |
+| `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL` | token lifetime in seconds (900 and 604800) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | the admin account created by the seed |
+
+## Project structure
+
+```
+src/
+  main.ts              starts the app, Swagger at /docs, pino as the logger
+  app.module.ts        imports the modules, global validation pipe and error filter
+  config/              validation of environment variables
+  prisma/              PrismaService: one connection pool for the whole app
+  common/
+    guards/            JwtAuthGuard and RolesGuard (global, registered in AuthModule)
+    decorators/        @Public, @Roles, @CurrentUser, @ApiErrorResponse (Swagger)
+    filters/           AllExceptionsFilter: one error format for every error
+    pipes/             AppValidationPipe: whitelist, rejects an array as a body
+    logging/           pino-http options
+    utils/             pagination, time constants, Postgres error codes
+  auth/                register, login, refresh with rotation, logout, hourly cleanup of expired tokens
+  users/               GET /users/me
+  equipment/           equipment list and creation
+  rooms/               rooms with filters and pagination, create and update (admin)
+  bookings/            bookings and room availability
+    booking-rules.ts   the rules as pure functions: time, capacity, access, free slots
+    bookings.service.ts  transactions, locks, error mapping
+  health/              GET /health
+prisma/
+  schema.prisma        the schema
+  migrations/          the only way the schema changes
+  seed.ts              admin, equipment, rooms, optional bulk data
+test/                  e2e tests and the test database setup
+```
+
+A controller accepts the request and returns the response, a service holds the logic, Prisma talks to the database. The rules that need no database are in `booking-rules.ts`, so they are tested without mocks.
+
+A request passes the parts in a fixed order: global guards (`JwtAuthGuard`, then `RolesGuard`), the validation pipe, the controller and the service. An error at any step goes through `AllExceptionsFilter`.
+
+## Database schema
+
+| Table | Purpose |
+|---|---|
+| `User` | email (unique), argon2 hash, name, role `admin` or `member` |
+| `RefreshToken` | one row per issued refresh token, with `expiresAt` and `revokedAt` |
+| `Room` | name (unique), capacity, floor, `isActive` |
+| `Equipment` | name (unique) |
+| `RoomEquipment` | links a room and its equipment, primary key `(roomId, equipmentId)` |
+| `Booking` | room, user, `startsAt`, `endsAt`, `status`, `attendeesCount`, title |
+
+Decisions:
+
+- **Ids are uuid**, generated by the database. They cannot be guessed or counted by a client.
+- **Time is `timestamptz`** and every API date is UTC (`Z` is required), so the server's time zone and daylight saving time do not change what a booking means.
+- **Rooms are deactivated, not deleted.** A booking keeps pointing at its room (`onDelete: Restrict` for user and room in `Booking`), so history is not lost. An inactive room cannot be booked, and its availability is empty.
+- **Cancelling is a status, not a delete.** The booking stays as history, and the exclusion constraint looks only at `confirmed` rows, so the slot is free again.
+- **Roles and statuses are Postgres enums**, so the database rejects any other value.
+- **Only a `member` can be registered through the API.** An admin is created by the seed, so nobody can make themselves an admin.
+- **Refresh tokens are stored**, so that logout and rotation work: a used token is marked `revokedAt`. If a revoked token comes back after 10 seconds, all sessions of that user are revoked, because it was probably stolen. A repeat inside 10 seconds is treated as a double click or two tabs and is refused without revoking anything. Expired rows are deleted every hour.
+- **Rules are repeated in the database where they can be.** The exclusion constraint forbids overlaps, CHECK constraints keep the duration between 15 minutes and 8 hours, foreign keys keep references valid. The service checks the same rules first to give a clear 400, the database is the last word.
+- **Migrations are forward-only.** Prisma has no down migrations. A migration that is already applied is never edited: a mistake is fixed by a new migration (see `20261015150000_drop_redundant_booking_time_check`).
+- **Several instances.** The API keeps no state in memory: access tokens are checked by their signature, refresh tokens, locks and the overlap check live in Postgres. Several instances behind a load balancer therefore work with no code change. Only the hourly cleanup of expired tokens would run in every instance, which is harmless because deleting an already deleted row does nothing.
+
+Indexes are listed with the queries they serve in the Performance section below.
+
 ## Double booking protection
 
 Two confirmed bookings of one room must not overlap in time, even when the requests arrive at the same moment. A check in the service is not enough: two requests can both run `SELECT` and see a free slot before either of them has inserted its row, and then both insert.
