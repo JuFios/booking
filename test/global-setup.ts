@@ -8,6 +8,9 @@ const TEST_JWT_SECRETS = {
 };
 
 export default async function globalSetup(): Promise<void> {
+  // Before .env: loadEnvFile does not override a variable that is already set,
+  // so LOG_LEVEL from .env is ignored and only the shell can turn logs on
+  process.env.LOG_LEVEL ??= 'silent';
   if (existsSync('.env')) {
     process.loadEnvFile('.env');
   }
@@ -36,7 +39,6 @@ export default async function globalSetup(): Promise<void> {
 
   process.env.DATABASE_URL = testUrl.toString();
   process.env.NODE_ENV = 'test';
-  process.env.LOG_LEVEL ??= 'silent';
   for (const [name, value] of Object.entries(TEST_JWT_SECRETS)) {
     process.env[name] ??= value;
   }
