@@ -77,12 +77,12 @@ Logs are JSON, one line per request, written to stdout by `nestjs-pino`:
 - The level follows the status: 2xx and 3xx `info`, 4xx `warn`, 5xx `error`. `userId` is added when the request is authenticated.
 - Only the method, url, id and status of a request are logged. Headers (`Authorization`, `Cookie`) and bodies (passwords, refresh tokens) are never written.
 - `x-request-id` from the request is used as the request id if it is up to 64 characters of letters, digits, `_`, `.` or `-`; otherwise an id is generated. The id is returned in the `x-request-id` response header, so a client can quote it when it reports a problem.
-- `GET /health` is not logged, so the Docker healthcheck does not fill the log.
+- `GET /health` is not logged (also with a query string or a trailing slash), so frequent health probes do not fill the log.
 - The level is set by `LOG_LEVEL` (`fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`; default `info`). Unexpected 500 errors are logged with the stack by `AllExceptionsFilter`.
 
 ## Environment variables
 
-Validated at start (`src/config/env.validation.ts`): the application does not start with a missing or invalid value. `.env.example` lists all of them.
+The variables the API reads are validated at start (`src/config/env.validation.ts`): the application does not start with a missing or invalid value. `POSTGRES_*` are read only by `docker-compose.yml`, `ADMIN_*` only by the seed, which checks them itself. `.env.example` lists all of them.
 
 | Variable | Meaning |
 |---|---|
@@ -103,12 +103,14 @@ src/
   app.module.ts        imports the modules, global validation pipe and error filter
   config/              validation of environment variables
   prisma/              PrismaService: one connection pool for the whole app
+  generated/           Prisma client from `prisma generate` (not committed)
   common/
     guards/            JwtAuthGuard and RolesGuard (global, registered in AuthModule)
     decorators/        @Public, @Roles, @CurrentUser, @ApiErrorResponse (Swagger)
     filters/           AllExceptionsFilter: one error format for every error
     pipes/             AppValidationPipe: whitelist, rejects an array as a body
     logging/           pino-http options
+    dto/               shared DTOs: error response, pagination query and page meta
     utils/             pagination, time constants, Postgres error codes
   auth/                register, login, refresh with rotation, logout, hourly cleanup of expired tokens
   users/               GET /users/me
