@@ -19,6 +19,11 @@ export const LOG_LEVELS = [
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
+// Express routes '/health?x=1' and '/health/' to the same handler as '/health'
+function pathOf(url = ''): string {
+  return url.split('?')[0].replace(/(.)\/+$/, '$1');
+}
+
 export function createPinoHttpOptions(level: LogLevel): Options {
   return {
     level,
@@ -49,7 +54,7 @@ export function createPinoHttpOptions(level: LogLevel): Options {
       userId: (req as Partial<AuthenticatedRequest>).user?.id,
     }),
     autoLogging: {
-      ignore: (req) => NOT_LOGGED_URLS.includes(req.url ?? ''),
+      ignore: (req) => NOT_LOGGED_URLS.includes(pathOf(req.url)),
     },
   };
 }

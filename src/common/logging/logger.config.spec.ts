@@ -112,6 +112,8 @@ describe('request logging', () => {
     const { app, logs } = createApp();
 
     await request(app).get('/health').expect(200);
+    await request(app).get('/health?probe=lb').expect(200);
+    await request(app).get('/health/').expect(200);
 
     expect(await logs()).toEqual([]);
   });
