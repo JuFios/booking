@@ -1,7 +1,11 @@
 import { HOUR_MS, MINUTE_MS } from '../common/utils/time';
+import { Role } from '../generated/prisma/client';
 import {
   availabilityWindow,
+  canAccessBooking,
   checkBookingTime,
+  checkRoomForBooking,
+  earliestStartEndingAfter,
   findFreeSlots,
   hasEnded,
   MAX_BOOKING_ADVANCE_MS,
@@ -214,5 +218,95 @@ describe('findFreeSlots: free time of a day', () => {
         dayEnd,
       ),
     ).toEqual([{ startsAt: on(21, '23:40'), endsAt: dayEnd }]);
+  });
+});
+
+describe('checkBookingTime: duration', () => {
+  const start = at('12:00');
+
+  it('rejects an end equal to the start', () => {
+    expect(checkBookingTime(start, start, now)).toBe(
+      'startsAt must be earlier than endsAt',
+    );
+  });
+
+  it('rejects an end before the start', () => {
+    expect(checkBookingTime(start, later(start, -HOUR_MS), now)).toBe(
+      'startsAt must be earlier than endsAt',
+    );
+  });
+
+  it('rejects a booking shorter than 15 minutes', () => {
+    expect(checkBookingTime(start, later(start, 14 * MINUTE_MS), now)).toBe(
+      'Booking must last at least 15 minutes',
+    );
+  });
+
+  it('accepts a booking of exactly 15 minutes', () => {
+    expect(
+      checkBookingTime(start, later(start, 15 * MINUTE_MS), now),
+    ).toBeUndefined();
+  });
+
+  it('accepts a booking of exactly 8 hours', () => {
+    expect(
+      checkBookingTime(start, later(start, 8 * HOUR_MS), now),
+    ).toBeUndefined();
+  });
+
+  it('rejects a booking longer than 8 hours', () => {
+    expect(
+      checkBookingTime(start, later(start, 8 * HOUR_MS + MINUTE_MS), now),
+    ).toBe('Booking must not last longer than 8 hours');
+  });
+});
+
+describe('checkRoomForBooking: room state and capacity', () => {
+  const room = { isActive: true, capacity: 10 };
+
+  it('accepts fewer attendees than the capacity', () => {
+    expect(checkRoomForBooking(room, 3)).toBeUndefined();
+  });
+
+  it('accepts attendees equal to the capacity', () => {
+    expect(checkRoomForBooking(room, 10)).toBeUndefined();
+  });
+
+  it('rejects more attendees than the capacity', () => {
+    expect(checkRoomForBooking(room, 11)).toBe(
+      'attendeesCount must not exceed the room capacity (10)',
+    );
+  });
+
+  it('rejects an inactive room', () => {
+    expect(checkRoomForBooking({ ...room, isActive: false }, 3)).toBe(
+      'Room is not active',
+    );
+  });
+
+  it('reports an inactive room before the capacity', () => {
+    expect(checkRoomForBooking({ ...room, isActive: false }, 11)).toBe(
+      'Room is not active',
+    );
+  });
+});
+
+describe('canAccessBooking: owner or admin', () => {
+  it('lets the owner in', () => {
+    expect(canAccessBooking({ id: 'u1', role: Role.member }, 'u1')).toBe(true);
+  });
+
+  it('keeps another member out', () => {
+    expect(canAccessBooking({ id: 'u2', role: Role.member }, 'u1')).toBe(false);
+  });
+
+  it('lets an admin in to a booking of someone else', () => {
+    expect(canAccessBooking({ id: 'a1', role: Role.admin }, 'u1')).toBe(true);
+  });
+});
+
+describe('earliestStartEndingAfter', () => {
+  it('is 8 hours before the moment: the longest booking that can still overlap it', () => {
+    expect(earliestStartEndingAfter(now)).toEqual(later(now, -8 * HOUR_MS));
   });
 });
